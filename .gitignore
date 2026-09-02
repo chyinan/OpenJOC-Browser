@@ -1,0 +1,6 @@
+.qa/
+.test-dist/
+artifacts/
+extension/*.js
+extension/wasm/
+node_modules/

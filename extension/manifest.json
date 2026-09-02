@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "OpenJOC Browser",
+  "version": "0.1.0",
+  "description": "Chromium playback integration for OpenJOC E-AC-3 JOC decoding without native Dolby decoding.",
+  "action": {
+    "default_title": "OpenJOC Browser"
+  },
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}

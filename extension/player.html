@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenJOC Browser Phase 0</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+      body { max-width: 720px; margin: 0 auto; padding: 2rem; background: #111827; color: #f3f4f6; }
+      main { display: grid; gap: 1rem; }
+      fieldset { display: grid; gap: .75rem; border: 1px solid #374151; border-radius: .5rem; padding: 1rem; }
+      .controls { display: flex; flex-wrap: wrap; gap: .5rem; }
+      button { padding: .5rem .8rem; cursor: pointer; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #030712; padding: 1rem; border-radius: .5rem; }
+      #error { color: #fca5a5; }
+      .muted { color: #9ca3af; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>OpenJOC Browser — Phase 0</h1>
+      <p class="muted">Local raw E-AC-3/JOC test player. Audio enters OpenJOC WASM and leaves through Web Audio/AudioWorklet.</p>
+      <fieldset>
+        <label for="file-input">Local raw .ec3 fixture</label>
+        <input id="file-input" type="file" accept=".ec3,audio/eac3">
+        <span id="file-name" class="muted">no file selected</span>
+        <div class="controls">
+          <button id="play-button" type="button">Play / Resume</button>
+          <button id="pause-button" type="button">Pause</button>
+          <button id="stop-button" type="button">Stop / Reset</button>
+        </div>
+      </fieldset>
+      <section aria-labelledby="state-heading">
+        <h2 id="state-heading">State</h2>
+        <p id="state">idle</p>
+        <p id="error" hidden></p>
+      </section>
+      <section aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Diagnostics</h2>
+        <pre id="diagnostics">waiting for decoder</pre>
+      </section>
+    </main>
+    <script type="module" src="player.js"></script>
+  </body>
+</html>

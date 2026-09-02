@@ -1,0 +1,17 @@
+{
+  "name": "openjoc-browser",
+  "version": "0.1.0-dev",
+  "private": true,
+  "type": "module",
+  "description": "Chromium browser playback integration for OpenJOC E-AC-3 JOC decoding",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "check:wasm": "node scripts/check-wasm.mjs",
+    "parity": "node scripts/wasm-parity.mjs",
+    "test": "tsc -p tsconfig.test.json && node .test-dist/tests/audio-queue.test.js && node .test-dist/tests/worker-generation.test.js"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}
