@@ -59,7 +59,7 @@ export type RuntimeMessage =
   | Readonly<{target: 'offscreen'; type: 'native-muted'; tabId: number; generation: number}>
   | Readonly<{target: 'offscreen'; type: 'disable'; tabId: number; generation: number}>
   | Readonly<{target: 'offscreen'; type: 'dialnorm'; tabId: number; generation: number; mode: 'calibrated' | 'unity'}>
-  | Readonly<{target: 'background'; type: 'offscreen-status'; tabId: number; generation: number; phase: PlaybackPhase; reason: string | null; inbandJocConfirmed: boolean; metrics: PlaybackMetrics}>;
+  | Readonly<{target: 'background'; type: 'offscreen-status'; tabId: number; generation: number; phase: PlaybackPhase; reason: string | null; inbandJocConfirmed: boolean; profile: string | null; metrics: PlaybackMetrics}>;
 
 /** Validates untrusted MAIN-world data before it reaches extension code. */
 export function isMainBridgeMessage(value: unknown): value is MainBridgeMessage {
@@ -115,9 +115,9 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     return isTabId(value.tabId) && isGeneration(value.generation) && (value.mode === 'calibrated' || value.mode === 'unity');
   }
   if (value.target === 'background' && value.type === 'offscreen-status') {
-    return isTabId(value.tabId) && isGeneration(value.generation) && isPlaybackPhase(value.phase)
+      return isTabId(value.tabId) && isGeneration(value.generation) && isPlaybackPhase(value.phase)
       && isNullableString(value.reason) && typeof value.inbandJocConfirmed === 'boolean'
-      && isPlaybackMetrics(value.metrics);
+      && isNullableString(value.profile) && isPlaybackMetrics(value.metrics);
   }
   return false;
 }

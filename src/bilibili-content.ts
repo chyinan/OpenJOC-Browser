@@ -6,7 +6,7 @@ type ContentMediaKey = Readonly<{readonly bvid: string; readonly aid: string; re
 type ContentCandidate = Readonly<{readonly id: string; readonly source: 'dolby' | 'ec-3'; readonly codecs: string | null; readonly mimeType: string | null; readonly bandwidth: number | null; readonly baseUrl: string; readonly backupUrls: ReadonlyArray<string>}>;
 type ContentManifest = Readonly<{readonly source: 'openjoc-bilibili'; readonly type: 'manifest'; readonly pageOrigin: string; readonly pageUrl: string; readonly mediaKey: ContentMediaKey; readonly candidates: ReadonlyArray<ContentCandidate>}>;
 type ContentUnavailable = Readonly<{readonly source: 'openjoc-bilibili'; readonly type: 'unavailable'; readonly pageOrigin: string; readonly pageUrl: string; readonly reason: string}>;
-type ContentStatus = Readonly<{readonly target: 'background'; readonly type: 'offscreen-status'; readonly tabId: number; readonly generation: number; readonly phase: 'disabled' | 'preparing' | 'ready' | 'active' | 'paused' | 'buffering' | 'error'; readonly reason: string | null; readonly inbandJocConfirmed: boolean; readonly metrics: Readonly<Record<string, unknown>>}>;
+type ContentStatus = Readonly<{readonly target: 'background'; readonly type: 'offscreen-status'; readonly tabId: number; readonly generation: number; readonly phase: 'disabled' | 'preparing' | 'ready' | 'active' | 'paused' | 'buffering' | 'error'; readonly reason: string | null; readonly inbandJocConfirmed: boolean; readonly profile: string | null; readonly metrics: Readonly<Record<string, unknown>>}>;
 type ContentToggle = Readonly<{readonly target: 'background'; readonly type: 'toggle'}>;
 
 const PAGE_ORIGIN = 'https://www.bilibili.com';
@@ -200,6 +200,7 @@ function updateDetails(): void {
   details.textContent = JSON.stringify({
     phase: latestStatus?.phase ?? 'disabled',
     inbandJocConfirmed: latestStatus?.inbandJocConfirmed ?? false,
+    profile: latestStatus?.profile ?? null,
     currentVideoMediaTime: metrics?.currentVideoMediaTime ?? null,
     currentAudioMediaTime: metrics?.currentAudioMediaTime ?? null,
     driftMs: metrics?.driftMs ?? null,

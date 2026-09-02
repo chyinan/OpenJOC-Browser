@@ -110,7 +110,7 @@ function sendStatus(
     baseLatencyMs: outputClock.baseLatencyMs,
     outputLatencyMs: outputClock.outputLatencyMs,
   };
-  const message: RuntimeMessage = {target: 'background', type: 'offscreen-status', tabId: session.request.tabId, generation: session.request.generation, phase, reason, inbandJocConfirmed: session.isJocConfirmed, metrics};
+  const message: RuntimeMessage = {target: 'background', type: 'offscreen-status', tabId: session.request.tabId, generation: session.request.generation, phase, reason, inbandJocConfirmed: session.isJocConfirmed, profile: decoder?.profile ?? null, metrics};
   chrome.runtime.sendMessage(message).catch(() => undefined);
 }
 
