@@ -35,14 +35,34 @@ export type WasmDecoderSnapshot = Readonly<{
 
 type WasmNumberFunction = (...arguments_: Array<number>) => number;
 type WasmNumericFunction = (...arguments_: Array<number>) => number | bigint;
+type WasmPacketFunction = (handle: number, pointer: number, length: number, ptsSamples: bigint, flags: number) => number;
+
+const NO_PTS_SAMPLES = -9_223_372_036_854_775_808n;
+
+export type WasmPcmBlock = Readonly<{
+  readonly samples: Float32Array;
+  readonly ptsSamples: number | null;
+}>;
+
+export type WasmPacketOptions = Readonly<{
+  readonly ptsSamples: number | null;
+  readonly discontinuity: boolean;
+  readonly preroll: boolean;
+}>;
+
+export type WasmDecoderOptions = Readonly<{
+  readonly dialnormMode?: 'calibrated' | 'unity';
+}>;
 
 type WasmExports = Readonly<{
   readonly memory: WebAssembly.Memory;
   readonly openjoc_wasm_alloc: WasmNumberFunction;
   readonly openjoc_wasm_dealloc: WasmNumberFunction;
   readonly openjoc_wasm_decoder_create: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_create_with_dialnorm: WasmNumberFunction;
   readonly openjoc_wasm_decoder_destroy: WasmNumberFunction;
   readonly openjoc_wasm_decoder_push_bytes: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_push_packet: WasmPacketFunction;
   readonly openjoc_wasm_decoder_flush: WasmNumberFunction;
   readonly openjoc_wasm_decoder_reset: WasmNumberFunction;
   readonly openjoc_wasm_decoder_receive_pcm: WasmNumberFunction;
@@ -50,6 +70,7 @@ type WasmExports = Readonly<{
   readonly openjoc_wasm_decoder_pcm_ptr: WasmNumberFunction;
   readonly openjoc_wasm_decoder_pcm_len: WasmNumberFunction;
   readonly openjoc_wasm_decoder_pcm_samples: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_pcm_pts_samples: (handle: number) => bigint;
   readonly openjoc_wasm_decoder_sample_rate: WasmNumberFunction;
   readonly openjoc_wasm_decoder_channel_count: WasmNumberFunction;
   readonly openjoc_wasm_decoder_queued_audio_ms: WasmNumberFunction;
@@ -95,6 +116,31 @@ function requireFunction(
   return value as WasmNumberFunction;
 }
 
+function requirePacketFunction(
+  exports_: WebAssembly.Exports,
+  name: string,
+): WasmPacketFunction {
+  const value = exports_[name];
+  if (typeof value !== 'function') {
+    throw new Error(`OpenJOC WASM export is missing: ${name}`);
+  }
+  // WebAssembly i64 parameters are exposed as bigint by the browser binding;
+  // the generic numeric export validator cannot express that ABI distinction.
+  return value as unknown as WasmPacketFunction;
+}
+
+function requirePtsFunction(
+  exports_: WebAssembly.Exports,
+  name: string,
+): (handle: number) => bigint {
+  const value = exports_[name];
+  if (typeof value !== 'function') {
+    throw new Error(`OpenJOC WASM export is missing: ${name}`);
+  }
+  // WebAssembly i64 results are exposed as bigint by the browser binding.
+  return value as unknown as (handle: number) => bigint;
+}
+
 function createExports(instance: WebAssembly.Instance): WasmExports {
   const raw = instance.exports;
   return {
@@ -102,8 +148,10 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
     openjoc_wasm_alloc: requireFunction(raw, 'openjoc_wasm_alloc'),
     openjoc_wasm_dealloc: requireFunction(raw, 'openjoc_wasm_dealloc'),
     openjoc_wasm_decoder_create: requireFunction(raw, 'openjoc_wasm_decoder_create'),
+    openjoc_wasm_decoder_create_with_dialnorm: requireFunction(raw, 'openjoc_wasm_decoder_create_with_dialnorm'),
     openjoc_wasm_decoder_destroy: requireFunction(raw, 'openjoc_wasm_decoder_destroy'),
     openjoc_wasm_decoder_push_bytes: requireFunction(raw, 'openjoc_wasm_decoder_push_bytes'),
+    openjoc_wasm_decoder_push_packet: requirePacketFunction(raw, 'openjoc_wasm_decoder_push_packet'),
     openjoc_wasm_decoder_flush: requireFunction(raw, 'openjoc_wasm_decoder_flush'),
     openjoc_wasm_decoder_reset: requireFunction(raw, 'openjoc_wasm_decoder_reset'),
     openjoc_wasm_decoder_receive_pcm: requireFunction(raw, 'openjoc_wasm_decoder_receive_pcm'),
@@ -111,6 +159,7 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
     openjoc_wasm_decoder_pcm_ptr: requireFunction(raw, 'openjoc_wasm_decoder_pcm_ptr'),
     openjoc_wasm_decoder_pcm_len: requireFunction(raw, 'openjoc_wasm_decoder_pcm_len'),
     openjoc_wasm_decoder_pcm_samples: requireFunction(raw, 'openjoc_wasm_decoder_pcm_samples'),
+    openjoc_wasm_decoder_pcm_pts_samples: requirePtsFunction(raw, 'openjoc_wasm_decoder_pcm_pts_samples'),
     openjoc_wasm_decoder_sample_rate: requireFunction(raw, 'openjoc_wasm_decoder_sample_rate'),
     openjoc_wasm_decoder_channel_count: requireFunction(raw, 'openjoc_wasm_decoder_channel_count'),
     openjoc_wasm_decoder_queued_audio_ms: requireFunction(raw, 'openjoc_wasm_decoder_queued_audio_ms'),
@@ -146,9 +195,10 @@ export class WasmDecoderClient {
   private peakMemoryBytes: number;
   private isDestroyed = false;
 
-  public constructor(instance: WebAssembly.Instance) {
+  public constructor(instance: WebAssembly.Instance, options: WasmDecoderOptions = {}) {
     this.exports_ = createExports(instance);
-    this.handle = this.exports_.openjoc_wasm_decoder_create();
+    const mode = options.dialnormMode === 'unity' ? 1 : 0;
+    this.handle = this.exports_.openjoc_wasm_decoder_create_with_dialnorm(mode);
     if (this.handle === 0) {
       throw new Error('failed to create OpenJOC WASM decoder');
     }
@@ -181,6 +231,33 @@ export class WasmDecoderClient {
     }
   }
 
+  public pushPacket(bytes: Readonly<Uint8Array>, options: WasmPacketOptions): WasmDecoderStatus {
+    this.assertAlive();
+    if (bytes.length === 0) {
+      throw new Error('cannot push an empty OpenJOC CMAF packet');
+    }
+    const pointer = this.exports_.openjoc_wasm_alloc(bytes.length);
+    if (pointer === 0) {
+      throw new Error('failed to allocate OpenJOC WASM packet buffer');
+    }
+    const flags = (options.discontinuity ? 1 : 0) | (options.preroll ? 2 : 0);
+    const ptsSamples = options.ptsSamples === null ? NO_PTS_SAMPLES : BigInt(options.ptsSamples);
+    try {
+      this.writeBytes(pointer, bytes);
+      const status = this.statusCode(this.exports_.openjoc_wasm_decoder_push_packet(
+        this.handle,
+        pointer,
+        bytes.length,
+        ptsSamples,
+        flags,
+      ));
+      this.recordMemory();
+      return status;
+    } finally {
+      this.exports_.openjoc_wasm_dealloc(pointer, bytes.length);
+    }
+  }
+
   public flush(): WasmDecoderStatus {
     this.assertAlive();
     const status = this.statusCode(this.exports_.openjoc_wasm_decoder_flush(this.handle));
@@ -188,7 +265,7 @@ export class WasmDecoderClient {
     return status;
   }
 
-  public receivePcm(): Float32Array | null {
+  public receivePcm(): WasmPcmBlock | null {
     this.assertAlive();
     if (this.exports_.openjoc_wasm_decoder_receive_pcm(this.handle) !== 1) {
       return null;
@@ -202,10 +279,11 @@ export class WasmDecoderClient {
     this.assertMemoryRange(pointer, length * Float32Array.BYTES_PER_ELEMENT);
     const output = new Float32Array(length);
     output.set(new Float32Array(this.exports_.memory.buffer, pointer, length));
+    const pts = this.exports_.openjoc_wasm_decoder_pcm_pts_samples(this.handle);
     if (this.exports_.openjoc_wasm_decoder_consume_pcm(this.handle) !== 1) {
       throw new Error('OpenJOC WASM failed to consume its PCM buffer');
     }
-    return output;
+    return {samples: output, ptsSamples: pts === NO_PTS_SAMPLES ? null : Number(pts)};
   }
 
   public status(): WasmDecoderSnapshot {
@@ -329,7 +407,7 @@ export class WasmDecoderClient {
   }
 }
 
-export async function loadOpenJocWasm(url: URL): Promise<WasmDecoderClient> {
+export async function loadOpenJocWasm(url: URL, options: WasmDecoderOptions = {}): Promise<WasmDecoderClient> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`failed to load OpenJOC WASM: ${response.status}`);
@@ -340,5 +418,5 @@ export async function loadOpenJocWasm(url: URL): Promise<WasmDecoderClient> {
       openjoc_wasm_clock_now_ms: (): number => performance.now(),
     },
   });
-  return new WasmDecoderClient(instantiated.instance);
+  return new WasmDecoderClient(instantiated.instance, options);
 }

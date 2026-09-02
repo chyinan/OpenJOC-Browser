@@ -10,7 +10,7 @@ const CHUNK_BYTES = 64 * 1024;
 const MAX_DECODE_QUEUE_MS = 1000;
 
 const decoderSlot = new DecoderGenerationSlot<WasmDecoderClient>(
-  async (): Promise<WasmDecoderClient> => loadOpenJocWasm(new URL('./wasm/openjoc_wasm.wasm', import.meta.url)),
+  async (): Promise<WasmDecoderClient> => loadOpenJocWasm(new URL('./wasm/openjoc_wasm.wasm', import.meta.url), {dialnormMode}),
   (decoder): void => decoder.destroy(),
 );
 let isPaused = false;
@@ -19,8 +19,11 @@ let generation = 0;
 let pcmSequence = 0;
 let acceptedSequence = 0;
 let wakeResolver: (() => void) | null = null;
+let decoderMode: 'raw' | 'cmaf-calibrated' | 'cmaf-unity' | null = null;
+let dialnormMode: 'calibrated' | 'unity' = 'calibrated';
+let cmafCommandTail: Promise<void> = Promise.resolve();
 
-function postMessage(message: WorkerMessage, transfer: ArrayBuffer[] = []): void {
+function postMessage(message: WorkerMessage, transfer: Array<ArrayBuffer> = []): void {
   workerScope.postMessage(message, transfer);
 }
 
@@ -78,11 +81,11 @@ async function postAvailablePcm(currentGeneration: number): Promise<void> {
     if (pcm === null) {
       break;
     }
-    const buffer = new ArrayBuffer(pcm.byteLength);
-    new Float32Array(buffer).set(pcm);
+    const buffer = new ArrayBuffer(pcm.samples.byteLength);
+    new Float32Array(buffer).set(pcm.samples);
     pcmSequence += 1;
     const sequence = pcmSequence;
-    postMessage({type: 'pcm', generation, sequence, buffer, samples: pcm.length / 2}, [buffer]);
+    postMessage({type: 'pcm', generation, sequence, buffer, samples: pcm.samples.length / 2, ptsSamples: pcm.ptsSamples}, [buffer]);
     await yieldToWorkerEventLoop();
     if (!isCurrentGeneration(currentGeneration, generation)) {
       return;
@@ -178,6 +181,8 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number): Pr
     queuedAudioMs = 0;
     pcmSequence = 0;
     acceptedSequence = 0;
+    decoderMode = 'raw';
+    dialnormMode = 'calibrated';
     postDecoderStatus();
     await decodeBytes(bytes, currentGeneration);
   } finally {
@@ -185,11 +190,72 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number): Pr
   }
 }
 
+async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: 'calibrated' | 'unity'): Promise<boolean> {
+  const requestedMode = requestedDialnorm === 'unity' ? 'cmaf-unity' : 'cmaf-calibrated';
+  if (decoderMode === requestedMode && decoderSlot.current() !== null) {
+    return isCurrentGeneration(currentGeneration, generation);
+  }
+  dialnormMode = requestedDialnorm;
+  const loadedDecoder = await decoderSlot.start(currentGeneration);
+  if (!isCurrentGeneration(currentGeneration, generation) || loadedDecoder === null) {
+    return false;
+  }
+  decoderMode = requestedMode;
+  isPaused = false;
+  queuedAudioMs = 0;
+  pcmSequence = 0;
+  acceptedSequence = 0;
+  postDecoderStatus();
+  return true;
+}
+
+async function handleCmafSample(command: Extract<WorkerCommand, {type: 'decode-cmaf-sample'}>): Promise<void> {
+  if (command.generation < generation) return;
+  generation = Math.max(generation, command.generation);
+  const currentGeneration = command.generation;
+  if (!(await ensureCmafDecoder(currentGeneration, command.dialnorm))) return;
+  await waitForPlaybackBudget();
+  if (!isCurrentGeneration(currentGeneration, generation)) return;
+  const status = requireDecoder().pushPacket(new Uint8Array(command.bytes), {
+    ptsSamples: command.ptsSamples,
+    discontinuity: command.discontinuity,
+    preroll: command.preroll,
+  });
+  throwIfError(status);
+  await postAvailablePcm(currentGeneration);
+  if (isCurrentGeneration(currentGeneration, generation)) {
+    postDecoderStatus();
+  }
+}
+
+async function handleCmafEnd(command: Extract<WorkerCommand, {type: 'end-cmaf'}>): Promise<void> {
+  if (command.generation !== generation || (decoderMode !== 'cmaf-calibrated' && decoderMode !== 'cmaf-unity')) return;
+  const currentGeneration = command.generation;
+  while (isCurrentGeneration(currentGeneration, generation)) {
+    await waitForPlaybackBudget();
+    if (!isCurrentGeneration(currentGeneration, generation)) return;
+    const status = requireDecoder().flush();
+    throwIfError(status);
+    await postAvailablePcm(currentGeneration);
+    if (status === 3) break;
+    await yieldToWorkerEventLoop();
+  }
+  if (isCurrentGeneration(currentGeneration, generation)) {
+    postMessage({type: 'decode-complete', generation: currentGeneration});
+  }
+}
+
 async function handleCommand(command: WorkerCommand): Promise<void> {
   switch (command.type) {
-    case 'decode':
-      await handleDecode(command.bytes, command.generation);
-      return;
+      case 'decode':
+        await handleDecode(command.bytes, command.generation);
+        return;
+      case 'decode-cmaf-sample':
+        await handleCmafSample(command);
+        return;
+      case 'end-cmaf':
+        await handleCmafEnd(command);
+        return;
     case 'pause':
       if (!isCurrentGeneration(command.generation, generation)) return;
       isPaused = true;
@@ -203,6 +269,7 @@ async function handleCommand(command: WorkerCommand): Promise<void> {
       if (command.generation < generation) return;
       generation = command.generation;
       decoderSlot.reset(command.generation, (decoder): void => decoder.reset());
+      decoderMode = null;
       isPaused = false;
       queuedAudioMs = 0;
       acceptedSequence = 0;
@@ -220,19 +287,28 @@ async function handleCommand(command: WorkerCommand): Promise<void> {
   }
 }
 
-workerScope.onmessage = (event: MessageEvent<WorkerCommand>): void => {
-  void handleCommand(event.data).catch((error: unknown) => {
-    if (!isCurrentGeneration(event.data.generation, generation)) {
+function handleCommandError(command: WorkerCommand, error: unknown): void {
+  if (!isCurrentGeneration(command.generation, generation)) {
       return;
-    }
-    const message = error instanceof Error ? error.message : 'OpenJOC worker failed';
-    const status = decoderSlot.current()?.status();
-    postMessage({
-      type: 'error',
-      generation,
-      message,
-      category: status?.errorCategory ?? 'internal',
-      detail: status?.errorDetail ?? message,
-    });
+  }
+  const message = error instanceof Error ? error.message : 'OpenJOC worker failed';
+  const status = decoderSlot.current()?.status();
+  postMessage({
+    type: 'error',
+    generation,
+    message,
+    category: status?.errorCategory ?? 'internal',
+    detail: status?.errorDetail ?? message,
   });
+}
+
+workerScope.onmessage = (event: MessageEvent<WorkerCommand>): void => {
+  const command = event.data;
+  if (command.type === 'decode-cmaf-sample' || command.type === 'end-cmaf') {
+    cmafCommandTail = cmafCommandTail
+      .then(() => handleCommand(command))
+      .catch((error: unknown) => handleCommandError(command, error));
+    return;
+  }
+  void handleCommand(command).catch((error: unknown) => handleCommandError(command, error));
 };

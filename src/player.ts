@@ -118,7 +118,7 @@ function maybeResolvePreroll(queuedAudioMs: number, isEndOfStream = false): void
   }
 }
 
-function sendWorkerCommand(command: WorkerCommand, transfer: ArrayBuffer[] = []): void {
+function sendWorkerCommand(command: WorkerCommand, transfer: Array<ArrayBuffer> = []): void {
   ensureWorker().postMessage(command, transfer);
 }
 
@@ -151,7 +151,7 @@ function handleWorkerMessage(message: WorkerMessage): void {
         setError(new Error('AudioWorklet node is not initialized'));
         return;
       }
-      audioNode.port.postMessage({type: 'pcm', generation: message.generation, sequence: message.sequence, buffer: message.buffer}, [message.buffer]);
+      audioNode.port.postMessage({type: 'pcm', generation: message.generation, sequence: message.sequence, buffer: message.buffer, ptsSamples: null}, [message.buffer]);
       return;
     case 'decoder-status':
       renderDecoderStatus(message.status);

@@ -1,29 +1,54 @@
-# Phase 1 Bilibili integration plan
+# Phase 1 Bilibili JOC/CMAF integration
 
-This document records the next integration boundary only. It contains no Bilibili code and is not part of the Phase 0 playback path.
+Phase 1 adds a Chromium MV3 adapter for standard Bilibili VOD pages. The page's normal `<video>` remains the video renderer and master clock. OpenJOC owns only the replacement audio path.
 
-## Main-world page bridge
+## Observed site transport
 
-Use a small MAIN-world bridge for page-owned media observations. Keep the extension's isolated-world code responsible for messaging and validation. The bridge should expose only the media facts required for synchronization.
+The 2026-09-03 Edge CDP observation used a standard `/video/BV.../` page and observed:
 
-## Dolby representation discovery
+- playback manifest request: `https://api.bilibili.com/x/player/wbi/playurl`;
+- DASH/fMP4 media URLs under `https://upos-*.bilivideo.com/.../*.m4s`;
+- ranged responses with `206 Content-Range`, `ftyp`, `moov`, top-level `sidx`, then indexed media ranges;
+- observed sample timeline for an ordinary audio representation: 48 kHz `sidx`, 54 references, 240640-sample reference duration;
+- page video `currentSrc` is a `blob:` URL owned by the site's MSE player.
 
-Observe the native video element and its selected Dolby-capable representation through the page's existing playback metadata. Treat representation changes as state transitions. Do not assume a fixed URL or DOM shape.
+The inspected temporary profile exposed ordinary `mp4a`, not an entitled Dolby representation. A page title or manifest label is not treated as JOC proof; OpenJOC's in-band profile is authoritative.
 
-## Extension fetch
+## Runtime architecture
 
-Fetch the selected audio representation in the extension-controlled path, validate the response and container boundaries, then pass raw E-AC-3/CMAF samples to the existing OpenJOC WASM adapter.
+```text
+Bilibili MAIN bridge
+  -> exact playurl resource + sanitized candidate facts
+  -> isolated content controller
+  -> MV3 service worker (typed relay only)
+  -> offscreen.html
+       -> bounded HTTPS range fetch
+       -> browser ISO-BMFF transport parser
+       -> exact moof/mdat samples + PTS
+       -> OpenJOC WASM packet ABI
+       -> timestamped AudioWorklet queue
+       -> physical Stereo (Speakers) output
+```
 
-## Clock and audio ownership
+The MAIN bridge does not patch global fetch/XHR, MediaSource, SourceBuffer, `canPlayType`, or codec support. It observes the exact current `playurl` resource from `performance` and performs one targeted page-context read with the current session. The extension never exposes a generic page-requested fetch oracle.
 
-- Keep native video as the master clock.
-- Mute only the native audio path after the replacement PCM path is ready.
-- Send decoded PCM to the same AudioWorklet queue used by the local player.
+Browser code parses only BMFF transport structures: init `moov`/`mdhd`/`hdlr`/`stsd`, `sidx`, and fragment `moof`/`traf`/`tfhd`/`tfdt`/`trun`/`mdat`. E-AC-3/JOC/EMDF/OAMD semantics remain in OpenJOC Rust/WASM. `fetchCmafIndex()` is bounded to a 1 MiB initialization range and each media request is bounded to 4 MiB; playback keeps at most two indexed fragments in its active window.
 
-## Synchronization
+## Synchronization and failure behavior
 
-Define explicit play, pause, seek, rate-change, and teardown messages. Seek must reset the decoder and queue before accepting samples for the new timeline. A/V drift should be measured against video time, not hidden with unbounded buffering.
+The content controller reports `requestVideoFrameCallback().mediaTime` where available and falls back to `video.currentTime`. The offscreen document reports `AudioContext.getOutputTimestamp()`, `baseLatency`, and `outputLatency` for diagnostics. AudioWorklet consumes timestamped PCM only when the queue is aligned to the latest video media sample; future audio waits and stale audio is trimmed. Pause/buffering suspends audio and decoding; seek/media changes increment generation and restart from the target sidx range.
 
-## Deferred decisions
+Native Bilibili audio is muted only after OpenJOC has reported a non-empty in-band profile and the PCM path is ready. Disable, malformed media, fetch failure, unsupported format/rate, and extension errors clear the OpenJOC queue and restore the prior `muted`, `volume`, and `defaultMuted` state.
 
-Phase 1 must still decide how to handle representation switches, network retries, discontinuities, and browser-specific media events. Those decisions require a separate design review before website-specific code is added.
+## Tests and gates
+
+- `npm test` covers transport, URL/message validation, bounded window selection, timestamped queue, sync state, manifest candidate filtering, and the deterministic mock harness.
+- `npm run cmaf-parity` compares the project-owned raw fixture with the same payload in synthetic fragmented CMAF and requires `RAW_VS_CMAF_PCM=BIT_IDENTICAL`.
+- `npm run parity` retains the Phase 0 native-vs-WASM gate.
+- `scripts/cdp-qa.mjs` retains local Edge/Chrome Phase 0 lifecycle QA. A live Bilibili JOC smoke still requires a user session entitled to a Dolby representation.
+
+## Scope and limitations
+
+Supported implementation scope: Bilibili standard VOD, Chromium-based browsers, OpenJOC WASM, E-AC-3 JOC, Stereo (Speakers), and 1.0x playback. The manifest uses only Bilibili page/API and `*.bilivideo.com` host access.
+
+Deferred or unsupported: Binaural, Custom SOFA, virtual 9.1.6, non-1.0x time-stretch, Safari, Firefox, DRM/encrypted representations, and other Bilibili player classes. No account, region, DRM, or native Dolby bypass is implemented.

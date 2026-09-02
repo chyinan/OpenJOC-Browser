@@ -4,6 +4,8 @@ export const MAX_INPUT_FILE_BYTES = 128 * 1024 * 1024;
 
 export type WorkerCommand =
   | Readonly<{type: 'decode'; generation: number; bytes: ArrayBuffer}>
+  | Readonly<{type: 'decode-cmaf-sample'; generation: number; bytes: ArrayBuffer; ptsSamples: number; discontinuity: boolean; preroll: boolean; dialnorm: 'calibrated' | 'unity'}>
+  | Readonly<{type: 'end-cmaf'; generation: number}>
   | Readonly<{type: 'pause'; generation: number}>
   | Readonly<{type: 'resume'; generation: number}>
   | Readonly<{type: 'reset'; generation: number}>
@@ -41,7 +43,7 @@ export type DecoderWorkerStatus = Readonly<{
 }>;
 
 export type WorkerMessage =
-  | Readonly<{type: 'pcm'; generation: number; sequence: number; buffer: ArrayBuffer; samples: number}>
+  | Readonly<{type: 'pcm'; generation: number; sequence: number; buffer: ArrayBuffer; samples: number; ptsSamples: number | null}>
   | Readonly<{type: 'decoder-status'; generation: number; status: DecoderWorkerStatus}>
   | Readonly<{type: 'decode-complete'; generation: number}>
   | Readonly<{type: 'error'; generation: number; message: string; category: string | null; detail: string | null}>;

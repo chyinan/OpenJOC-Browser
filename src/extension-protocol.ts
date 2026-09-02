@@ -1,0 +1,200 @@
+// pattern: Functional Core
+
+export type MediaKey = Readonly<{
+  readonly bvid: string;
+  readonly aid: string;
+  readonly cid: string;
+}>;
+
+export type BilibiliAudioCandidate = Readonly<{
+  readonly id: string;
+  readonly source: 'dolby' | 'ec-3';
+  readonly codecs: string | null;
+  readonly mimeType: string | null;
+  readonly bandwidth: number | null;
+  readonly baseUrl: string;
+  readonly backupUrls: ReadonlyArray<string>;
+}>;
+
+export type MainBridgeMessage =
+  | Readonly<{source: 'openjoc-bilibili'; type: 'manifest'; pageOrigin: string; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>}>
+  | Readonly<{source: 'openjoc-bilibili'; type: 'unavailable'; pageOrigin: string; pageUrl: string; reason: string}>;
+
+export type PlaybackPhase = 'disabled' | 'preparing' | 'ready' | 'active' | 'paused' | 'buffering' | 'error';
+
+export type PlaybackMetrics = Readonly<{
+  readonly currentVideoMediaTime: number | null;
+  readonly currentAudioMediaTime: number | null;
+  readonly driftMs: number | null;
+  readonly driftP50Ms: number | null;
+  readonly driftP95Ms: number | null;
+  readonly driftMaxMs: number | null;
+  readonly resyncCount: number;
+  readonly compressedBufferMs: number;
+  readonly pcmBufferMs: number;
+  readonly underrunCount: number;
+  readonly decodeMeanMs: number;
+  readonly decodeP95Ms: number;
+  readonly decodeMaxMs: number;
+  readonly realtimeFactor: number | null;
+  readonly peakWasmMemoryBytes: number;
+  readonly mediaUrl: string | null;
+  readonly audioContextTime: number | null;
+  readonly audioPerformanceTime: number | null;
+  readonly baseLatencyMs: number | null;
+  readonly outputLatencyMs: number | null;
+}>;
+
+export type RuntimeMessage =
+  | Readonly<{target: 'background'; type: 'toggle'}>
+  | Readonly<{target: 'background'; type: 'request-manifest'; pageUrl: string}>
+  | Readonly<{target: 'background'; type: 'start'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'}>
+  | Readonly<{target: 'background'; type: 'manifest'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>}>
+  | Readonly<{target: 'background'; type: 'video-clock'; pageUrl: string; mediaKey: MediaKey; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
+  | Readonly<{target: 'background'; type: 'native-muted'; generation: number}>
+  | Readonly<{target: 'background'; type: 'disable'; generation: number}>
+  | Readonly<{target: 'background'; type: 'dialnorm'; generation: number; mode: 'calibrated' | 'unity'}>
+  | Readonly<{target: 'offscreen'; type: 'start'; tabId: number; pageUrl: string; mediaKey: MediaKey; candidate: BilibiliAudioCandidate; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'}>
+  | Readonly<{target: 'offscreen'; type: 'clock'; tabId: number; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
+  | Readonly<{target: 'offscreen'; type: 'native-muted'; tabId: number; generation: number}>
+  | Readonly<{target: 'offscreen'; type: 'disable'; tabId: number; generation: number}>
+  | Readonly<{target: 'offscreen'; type: 'dialnorm'; tabId: number; generation: number; mode: 'calibrated' | 'unity'}>
+  | Readonly<{target: 'background'; type: 'offscreen-status'; tabId: number; generation: number; phase: PlaybackPhase; reason: string | null; inbandJocConfirmed: boolean; metrics: PlaybackMetrics}>;
+
+/** Validates untrusted MAIN-world data before it reaches extension code. */
+export function isMainBridgeMessage(value: unknown): value is MainBridgeMessage {
+  if (!isRecord(value) || value.source !== 'openjoc-bilibili' || typeof value.pageOrigin !== 'string' || value.pageOrigin !== 'https://www.bilibili.com' || typeof value.pageUrl !== 'string') {
+    return false;
+  }
+  if (value.type === 'manifest') {
+    return isMediaKey(value.mediaKey) && isCandidateArray(value.candidates);
+  }
+  return value.type === 'unavailable' && typeof value.reason === 'string' && value.reason.length > 0;
+}
+
+/** Validates every message that crosses the extension runtime boundary. */
+export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
+  if (!isRecord(value) || typeof value.target !== 'string' || typeof value.type !== 'string') return false;
+  if (value.target === 'background' && value.type === 'toggle') return true;
+  if (value.target === 'background' && value.type === 'request-manifest') return typeof value.pageUrl === 'string';
+  if (value.target === 'background' && value.type === 'start') {
+    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates)
+      && isGeneration(value.generation) && isNonNegativeFinite(value.videoTimeSamples)
+      && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity');
+  }
+  if (value.target === 'background' && value.type === 'manifest') {
+    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates);
+  }
+  if (value.target === 'background' && value.type === 'video-clock') {
+    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isGeneration(value.generation)
+      && isNonNegativeFinite(value.mediaTimeSamples) && typeof value.paused === 'boolean'
+      && typeof value.buffering === 'boolean' && isFiniteNumber(value.playbackRate)
+      && isNullableFiniteNumber(value.expectedDisplayTimeMs);
+  }
+  if (value.target === 'background' && (value.type === 'native-muted' || value.type === 'disable')) {
+    return isGeneration(value.generation);
+  }
+  if (value.target === 'background' && value.type === 'dialnorm') {
+    return isGeneration(value.generation) && (value.mode === 'calibrated' || value.mode === 'unity');
+  }
+  if (value.target === 'offscreen' && value.type === 'start') {
+    return isTabId(value.tabId) && typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey)
+      && isCandidate(value.candidate) && isGeneration(value.generation)
+      && isNonNegativeFinite(value.videoTimeSamples)
+      && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity');
+  }
+  if (value.target === 'offscreen' && value.type === 'clock') {
+    return isTabId(value.tabId) && isGeneration(value.generation) && isNonNegativeFinite(value.mediaTimeSamples)
+      && typeof value.paused === 'boolean' && typeof value.buffering === 'boolean'
+      && isFiniteNumber(value.playbackRate) && isNullableFiniteNumber(value.expectedDisplayTimeMs);
+  }
+  if (value.target === 'offscreen' && (value.type === 'native-muted' || value.type === 'disable')) {
+    return isTabId(value.tabId) && isGeneration(value.generation);
+  }
+  if (value.target === 'offscreen' && value.type === 'dialnorm') {
+    return isTabId(value.tabId) && isGeneration(value.generation) && (value.mode === 'calibrated' || value.mode === 'unity');
+  }
+  if (value.target === 'background' && value.type === 'offscreen-status') {
+    return isTabId(value.tabId) && isGeneration(value.generation) && isPlaybackPhase(value.phase)
+      && isNullableString(value.reason) && typeof value.inbandJocConfirmed === 'boolean'
+      && isPlaybackMetrics(value.metrics);
+  }
+  return false;
+}
+
+function isMediaKey(value: unknown): value is MediaKey {
+  return isRecord(value) && isNonEmptyString(value.bvid) && isNonEmptyString(value.aid) && isNonEmptyString(value.cid);
+}
+
+function isCandidateArray(value: unknown): value is ReadonlyArray<BilibiliAudioCandidate> {
+  return Array.isArray(value) && value.every((candidate) => isCandidate(candidate));
+}
+
+function isCandidate(value: unknown): value is BilibiliAudioCandidate {
+  return isRecord(value) && isNonEmptyString(value.id)
+    && (value.source === 'dolby' || value.source === 'ec-3')
+    && isNullableString(value.codecs) && isNullableString(value.mimeType)
+    && isNullableFiniteNumber(value.bandwidth) && isNonEmptyString(value.baseUrl)
+    && Array.isArray(value.backupUrls) && value.backupUrls.every((url) => typeof url === 'string');
+}
+
+function isPlaybackMetrics(value: unknown): value is PlaybackMetrics {
+  if (!isRecord(value)) return false;
+  return isNullableFiniteNumber(value.currentVideoMediaTime)
+    && isNullableFiniteNumber(value.currentAudioMediaTime)
+    && isNullableFiniteNumber(value.driftMs)
+    && isNullableFiniteNumber(value.driftP50Ms)
+    && isNullableFiniteNumber(value.driftP95Ms)
+    && isNullableFiniteNumber(value.driftMaxMs)
+    && isGeneration(value.resyncCount)
+    && isNonNegativeFinite(value.compressedBufferMs)
+    && isNonNegativeFinite(value.pcmBufferMs)
+    && isGeneration(value.underrunCount)
+    && isNonNegativeFinite(value.decodeMeanMs)
+    && isNonNegativeFinite(value.decodeP95Ms)
+    && isNonNegativeFinite(value.decodeMaxMs)
+    && isNullableFiniteNumber(value.realtimeFactor)
+    && isNonNegativeFinite(value.peakWasmMemoryBytes)
+    && isNullableString(value.mediaUrl)
+    && isNullableFiniteNumber(value.audioContextTime)
+    && isNullableFiniteNumber(value.audioPerformanceTime)
+    && isNullableFiniteNumber(value.baseLatencyMs)
+    && isNullableFiniteNumber(value.outputLatencyMs);
+}
+
+function isPlaybackPhase(value: unknown): value is PlaybackPhase {
+  return value === 'disabled' || value === 'preparing' || value === 'ready' || value === 'active'
+    || value === 'paused' || value === 'buffering' || value === 'error';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === 'string';
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function isGeneration(value: unknown): value is number {
+  return isNonNegativeFinite(value) && Number.isSafeInteger(value);
+}
+
+function isTabId(value: unknown): value is number {
+  return isGeneration(value) && value > 0;
+}

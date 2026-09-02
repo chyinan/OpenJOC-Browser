@@ -6,6 +6,29 @@
   "action": {
     "default_title": "OpenJOC Browser"
   },
+  "permissions": [
+    "activeTab",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://www.bilibili.com/*",
+    "https://api.bilibili.com/*",
+    "https://*.bilivideo.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.bilibili.com/video/*"],
+      "js": ["bilibili-main-bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.bilibili.com/video/*"],
+      "js": ["bilibili-content.js"],
+      "run_at": "document_idle",
+      "world": "ISOLATED"
+    }
+  ],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
