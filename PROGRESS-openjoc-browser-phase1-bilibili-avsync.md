@@ -1,6 +1,6 @@
 # Progress: Bilibili JOC CMAF Playback and Video-Master A/V Sync
 
-> Created: 2026-09-03 | Status: in progress
+> Created: 2026-09-03 | Status: awaiting human live-site smoke
 
 ## Goal
 
@@ -25,7 +25,7 @@ Discover only media permitted by the current Bilibili session and confirm JOC in
 
 ## Current progress
 
-Codebase entry points, WASM/CMAF boundaries, and live Bilibili manifest/media observations are complete. Phase 2 route selected: offscreen audio with typed content/main bridge and browser transport parser. Phase 3 design is implemented. Pure-core TDD cycles for transport extraction, video-master decisions, timestamped PCM queue, URL/message security, manifest filtering, drift metrics, and the mock harness are green. Rust/WASM packet PTS and Dialnorm modes are green. Full quality gates and security/media review are in progress.
+Codebase entry points, WASM/CMAF boundaries, and live Bilibili manifest/media observations are complete. Phase 2 route selected: offscreen audio with typed content/main bridge and browser transport parser. Phase 3 design is implemented. Pure-core TDD cycles for transport extraction, video-master decisions, timestamped PCM queue, URL/message security, manifest filtering, drift metrics, and the mock harness are green. Rust/WASM packet PTS and Dialnorm modes are green. Browser and OpenJOC quality gates are green. Live Bilibili JOC entitlement smoke remains pending because controlled QA exposed only ordinary mp4a; no entitlement was bypassed.
 
 ## Task tracker
 
@@ -33,13 +33,13 @@ Codebase entry points, WASM/CMAF boundaries, and live Bilibili manifest/media ob
 - [x] Phase 2: compare and select implementation route
 - [x] Phase 3: validate design boundaries and implementation plan
 - [x] Write tests and implement
-- [ ] Run browser, Node, and Rust verification
-- [ ] Complete security/media review, docs, and focused commits
-- [ ] Produce final Phase 1 report
+- [x] Run browser, Node, and Rust verification
+- [x] Complete manual security/media review, docs, and focused commits
+- [ ] Produce final Phase 1 report after human live-site smoke
 
 ## Next step
 
-Write the failing Rust/WASM timestamp ABI test, then implement the packet/PCM PTS path before wiring extension lifecycle shells.
+Perform the human smoke on an entitled standard Bilibili Dolby/JOC VOD: enable, verify in-band profile/active Stereo audio, pause/resume, seek forward/back, buffering, then disable and verify native audio restoration.
 
 ## Key findings
 
@@ -47,3 +47,6 @@ Write the failing Rust/WASM timestamp ABI test, then implement the packet/PCM PT
 - OpenJOC API already supports packet PTS/discontinuity/preroll and PCM PTS; current WASM ABI does not expose them.
 - OpenJOC Rust CMAF validation is semantic and depends on native/ffprobe container paths; Browser should parse only generic BMFF transport and keep E-AC-3/JOC semantics in Rust/WASM.
 - Real Bilibili observation used `x/player/wbi/playurl`, DASH/fMP4 `.m4s`, and `*.bilivideo.com`; signed query parameters were not retained in diagnostics.
+- Automated gates: `npm run check`, `npm test`, `npm run check:wasm`, `npm run parity`, `npm run cmaf-parity`, Edge CDP Phase 0 normal/malformed QA, Rust fmt/check/clippy/full test all passed. Rust full test: 927 passed, 10 ignored.
+- Commits: Browser `5ef3797` plus UI status `f2785cf`; OpenJOC `7061215`.
+- Review status: manual security/media review completed; two delegated code-review attempts timed out and were stopped, so no delegated zero-issue result is claimed.
