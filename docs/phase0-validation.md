@@ -1,6 +1,6 @@
 # Phase 0 validation record
 
-Date: 2026-09-02
+Date: 2026-09-03
 
 ## Rust and WASM
 
@@ -34,6 +34,10 @@ underruns=0
 nativeDolbyDecoderUsed=false
 ```
 
+Human Edge audible smoke: `PASS`. The same unpacked extension played a real DEE E-AC-3 JOC `.ec3` through the physical audio device. OpenJOC decode was active, the Stereo (Speakers) output was audible, steady-state underruns were zero, and no playback error occurred.
+
+Playback level was relatively low. The Phase 0 path keeps OpenJOC's calibrated/program Dialnorm behavior; it does not add arbitrary gain. Calibrated / Unity Dialnorm selection belongs in a later Browser UX task.
+
 The browser diagnostics also expose the timing summary and realtime factor. Timing values vary by host; the machine gate checks that they are finite, positive, and ordered mean ≤ p95 ≤ max.
 
 The same controlled run covered Pause → Resume → Stop/Reset and lifecycle fixture → short fixture reopen. The malformed fixture produced `invalid E-AC-3 access-unit range`, zero decoded access units, zero output samples, and no console errors.
@@ -43,5 +47,17 @@ The long lifecycle run also waited for the AudioWorklet queue to drain to 5 ms o
 ## Remaining gates
 
 - Chrome machine QA is pending because no Chrome executable is installed on the current host.
-- Human audible smoke in Chrome and Edge is pending; headless/CDP checks do not prove speaker output.
+- Human Edge audible smoke is `PASS`; human Chrome audible smoke is `PENDING` until Chrome is installed.
 - CMAF `.m4s` input remains deferred; raw `.ec3` is the Phase 0 mandatory path.
+
+## Phase 0 verdict
+
+```text
+HUMAN_EDGE_AUDIO = PASS
+HUMAN_CHROME_AUDIO = PENDING
+NATIVE_DOLBY_DECODER_USED = NO
+CHROMIUM_OPENJOC_REALTIME_PROOF = PENDING_CHROME
+READY_FOR_BILIBILI_PHASE1 = NO
+```
+
+Do not begin Bilibili Phase 1 automatically. The remaining highest-value action is Chrome installation and repetition of the same controlled and audible smoke tests.

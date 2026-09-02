@@ -1,6 +1,6 @@
 # 进度追踪：OpenJOC-Browser Phase 0 WASM Stereo 实时播放证明
 
-> 创建时间：2026-09-02 | 状态：进行中
+> 创建时间：2026-09-02 | 状态：报告已完成；等待 Chrome QA
 
 ## 目标
 在 OpenJOC-Browser 中构建 Chromium Manifest V3 Phase 0 MVP：将本地 raw `.ec3` 输入交给现有 OpenJOC Rust 逻辑编译的 WASM，完成 Stereo 渲染，输出 48 kHz 双声道 Float32 PCM，并由 AudioWorklet 在 Chrome 和 Edge 中实时播放。
@@ -35,18 +35,20 @@
 - `D:/Programs/OpenJOC-Browser/PROGRESS-openjoc-browser-phase0-wasm-stereo.md` — 本任务进度和当前约束。
 
 ## 当前进度
-实现、性能/内存指标、Edge 串行正负向 QA 和文档已完成，最终 code review 已 ACCEPT，正在执行提交前最后一轮全量验证
+Phase 0 报告已完成；Edge human audible smoke 已由用户确认 PASS，Chrome machine/audio QA 仍 pending
 
 ## 下一步
-完成全量验证后提交 OpenJOC bridge 与 Browser 工程的 focused commits，并记录 Chrome/人工音频 pending。
+保留当前两个 focused commits；Chrome 安装后再单独执行 Chrome QA，不自动开始 Bilibili Phase 1。
 
 ## 发现的关键信息
 - `D:/Programs/OpenJOC` 存在其他任务的 `PROGRESS-*.md` 文件；本任务不读取或修改它们，除非审计发现与本任务直接相关。
 - `D:/Programs/OpenJOC-Browser` 是本任务目标仓库；OpenJOC 核心仅允许最小 WASM 集成。
-- `D:/Programs/OpenJOC-Browser` 当前不是 Git 仓库，只有本进度文件；必须新建仓库结构和提交历史。
+- `D:/Programs/OpenJOC-Browser` 已初始化 Git 仓库，Browser commit 为 `2d5ebb7`（后续报告更新另行提交）。
 - OpenJOC `master` HEAD 为 `ad6556babf42566f1a09820b01dc333703c8b1da`，相对 `origin/master` ahead 1，工作树 clean。
 - `openjoc-api::OpenJocSession::push_packet` 要求一个完整 JOC access unit；整段 `.ec3` 需要先用已有 syncframe/AU 规则切分。
 - API 不重采样且不强制 48 kHz；Phase 0 必须固定并验证 48 kHz fixture。
 - OpenJOC tracked fixtures 没有 `.ec3`/`.m4s`；项目提供按需生成的 synthetic `joc.ec3`，其公开记录哈希为 `54b48754b915cef97c13752de5eace4a219da6599cdfcf26f92b5b6fffc6e3e4`。
 - `openjoc-capi` 依赖 `openjoc-ffmpeg`，后者含 C build script；WASM bridge 应依赖 `openjoc-api` 而非 C/FFmpeg 路径。
-- `wasm32-unknown-unknown` 当前未安装；真实 target compile 仍是第一硬门槛。
+- `wasm32-unknown-unknown` 已安装并通过真实 target build/check。
+- 用户确认 `HUMAN_EDGE_AUDIO = PASS`：真实 DEE E-AC-3 JOC `.ec3` 已从物理音频设备播放；Chrome 仍因未安装而 pending。
+- 播放电平偏低归因于现有 calibrated/program Dialnorm 行为；Phase 0 不添加任意增益，Calibrated/Unity 选择后续处理。
