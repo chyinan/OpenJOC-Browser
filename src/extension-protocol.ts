@@ -43,15 +43,20 @@ export type PlaybackMetrics = Readonly<{
   readonly audioPerformanceTime: number | null;
   readonly baseLatencyMs: number | null;
   readonly outputLatencyMs: number | null;
+  readonly decodedAccessUnits: number;
+  readonly outputFrames: number;
+  readonly outputSamples: number;
 }>;
 
 export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'toggle'}>
+  | Readonly<{target: 'background'; type: 'request-session'}>
   | Readonly<{target: 'background'; type: 'request-manifest'; pageUrl: string}>
   | Readonly<{target: 'background'; type: 'page-media-range-request'; tabId: number; generation: number; requestId: string; url: string; start: number; end: number}>
   | Readonly<{target: 'background'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; buffer: ArrayBuffer}>
   | Readonly<{target: 'background'; type: 'start'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'}>
   | Readonly<{target: 'background'; type: 'manifest'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>}>
+  | Readonly<{target: 'background'; type: 'session-heartbeat'; pageUrl: string; mediaKey: MediaKey; generation: number}>
   | Readonly<{target: 'background'; type: 'video-clock'; pageUrl: string; mediaKey: MediaKey; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
   | Readonly<{target: 'background'; type: 'native-muted'; generation: number}>
   | Readonly<{target: 'background'; type: 'disable'; generation: number}>
@@ -79,6 +84,7 @@ export function isMainBridgeMessage(value: unknown): value is MainBridgeMessage 
 export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (!isRecord(value) || typeof value.target !== 'string' || typeof value.type !== 'string') return false;
   if (value.target === 'background' && value.type === 'toggle') return true;
+  if (value.target === 'background' && value.type === 'request-session') return true;
   if (value.target === 'background' && value.type === 'request-manifest') return typeof value.pageUrl === 'string';
   if (value.target === 'background' && value.type === 'page-media-range-request') {
     return isTabId(value.tabId) && isGeneration(value.generation) && isNonEmptyString(value.requestId)
@@ -98,6 +104,9 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   }
   if (value.target === 'background' && value.type === 'manifest') {
     return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates);
+  }
+  if (value.target === 'background' && value.type === 'session-heartbeat') {
+    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isGeneration(value.generation);
   }
   if (value.target === 'background' && value.type === 'video-clock') {
     return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isGeneration(value.generation)
@@ -178,7 +187,10 @@ function isPlaybackMetrics(value: unknown): value is PlaybackMetrics {
     && isNullableFiniteNumber(value.audioContextTime)
     && isNullableFiniteNumber(value.audioPerformanceTime)
     && isNullableFiniteNumber(value.baseLatencyMs)
-    && isNullableFiniteNumber(value.outputLatencyMs);
+    && isNullableFiniteNumber(value.outputLatencyMs)
+    && isNonNegativeFinite(value.decodedAccessUnits)
+    && isNonNegativeFinite(value.outputFrames)
+    && isNonNegativeFinite(value.outputSamples);
 }
 
 function isPlaybackPhase(value: unknown): value is PlaybackPhase {

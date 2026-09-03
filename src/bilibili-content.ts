@@ -8,6 +8,7 @@ type ContentManifest = Readonly<{readonly source: 'openjoc-bilibili'; readonly t
 type ContentUnavailable = Readonly<{readonly source: 'openjoc-bilibili'; readonly type: 'unavailable'; readonly pageOrigin: string; readonly pageUrl: string; readonly reason: string}>;
 type ContentStatus = Readonly<{readonly target: 'background'; readonly type: 'offscreen-status'; readonly tabId: number; readonly generation: number; readonly phase: 'disabled' | 'preparing' | 'ready' | 'active' | 'paused' | 'buffering' | 'error'; readonly reason: string | null; readonly inbandJocConfirmed: boolean; readonly profile: string | null; readonly metrics: Readonly<Record<string, unknown>>}>;
 type ContentToggle = Readonly<{readonly target: 'background'; readonly type: 'toggle'}>;
+type ContentRequestSession = Readonly<{readonly target: 'background'; readonly type: 'request-session'}>;
 type ContentPageRangeRequest = Readonly<{readonly target: 'background'; readonly type: 'page-media-range-request'; readonly tabId: number; readonly generation: number; readonly requestId: string; readonly url: string; readonly start: number; readonly end: number}>;
 type ContentPageRangeResponse = Readonly<{readonly source: 'openjoc-bilibili'; readonly type: 'media-range-response'; readonly pageOrigin: string; readonly pageUrl: string; readonly requestId: string; readonly status: number; readonly contentRange: string | null; readonly error: string | null; readonly buffer: ArrayBuffer}>;
 
@@ -15,6 +16,7 @@ const PAGE_ORIGIN = 'https://www.bilibili.com';
 const MEDIA_SUFFIX = '.bilivideo.com';
 const SAMPLE_RATE = 48_000;
 const CLOCK_INTERVAL_MS = 100;
+const SESSION_HEARTBEAT_INTERVAL_MS = 1_000;
 let video: HTMLVideoElement | null = null;
 let videoGeneration = 0;
 let latestManifest: ContentManifest | null = null;
@@ -22,6 +24,7 @@ let nativeSnapshot: Readonly<{video: HTMLVideoElement; muted: boolean; volume: n
 let isOpenJocRequested = false;
 let latestStatus: ContentStatus | null = null;
 let lastStatusAt = performance.now();
+let lastSessionHeartbeatAt = 0;
 let lastLocation = location.href;
 let clockTimer: number | null = null;
 let frameCallbackId: number | null = null;
@@ -101,6 +104,11 @@ function isToggleMessage(value: unknown): value is ContentToggle {
   return candidate !== null && candidate.target === 'background' && candidate.type === 'toggle';
 }
 
+function isRequestSessionMessage(value: unknown): value is ContentRequestSession {
+  const candidate = record(value);
+  return candidate !== null && candidate.target === 'background' && candidate.type === 'request-session';
+}
+
 function isPageRangeRequest(value: unknown): value is ContentPageRangeRequest {
   const candidate = record(value);
   const start = candidate?.start;
@@ -140,7 +148,17 @@ function currentCandidate(): ContentCandidate | null {
   return candidate !== null && approvedMediaUrl(candidate.baseUrl) && candidate.backupUrls.every(approvedMediaUrl) ? candidate : null;
 }
 
+function emitSessionHeartbeat(): void {
+  const manifest = latestManifest;
+  if (!isOpenJocRequested || manifest === null) return;
+  const now = performance.now();
+  if (now - lastSessionHeartbeatAt < SESSION_HEARTBEAT_INTERVAL_MS) return;
+  lastSessionHeartbeatAt = now;
+  send({target: 'background', type: 'session-heartbeat', pageUrl: location.href, mediaKey: manifest.mediaKey, generation: videoGeneration});
+}
+
 function emitClock(): void {
+  emitSessionHeartbeat();
   const currentVideo = video;
   const manifest = latestManifest;
   if (currentVideo === null || manifest === null || !isOpenJocRequested) return;
@@ -220,6 +238,9 @@ function updateDetails(): void {
     currentAudioMediaTime: metrics?.currentAudioMediaTime ?? null,
     driftMs: metrics?.driftMs ?? null,
     pcmBufferMs: metrics?.pcmBufferMs ?? 0,
+    decodedAccessUnits: metrics?.decodedAccessUnits ?? 0,
+    outputFrames: metrics?.outputFrames ?? 0,
+    outputSamples: metrics?.outputSamples ?? 0,
     underruns: metrics?.underrunCount ?? 0,
     media: metrics?.mediaUrl ?? null,
   }, null, 2);
@@ -316,6 +337,13 @@ chrome.runtime.onMessage.addListener((message: unknown): void => {
       enableOpenJoc();
     }
   }
+});
+
+chrome.runtime.onMessage.addListener((message: unknown, sender: ChromeMessageSender): void => {
+  if (!isRequestSessionMessage(message) || sender.id !== chrome.runtime.id || !isOpenJocRequested || latestManifest === null || video === null) return;
+  const currentTime = Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0;
+  send({target: 'background', type: 'start', pageUrl: location.href, mediaKey: latestManifest.mediaKey, candidates: latestManifest.candidates, generation: videoGeneration, videoTimeSamples: Math.round(currentTime * SAMPLE_RATE), dialnorm: dialnormSelect.value === 'unity' ? 'unity' : 'calibrated'});
+  lastSessionHeartbeatAt = performance.now();
 });
 
 chrome.runtime.onMessage.addListener((message: unknown, sender: ChromeMessageSender): void => {

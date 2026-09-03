@@ -34,6 +34,8 @@ The MAIN bridge does not patch global fetch/XHR, MediaSource, SourceBuffer, `can
 
 Browser code parses only BMFF transport structures: init `moov`/`mdhd`/`hdlr`/`stsd`, `sidx`, and fragment `moof`/`traf`/`tfhd`/`tfdt`/`trun`/`mdat`. E-AC-3/JOC/EMDF/OAMD semantics remain in OpenJOC Rust/WASM. `fetchCmafIndex()` starts with the observed small 8 KiB initialization range and each media request is bounded to 4 MiB; playback keeps at most two indexed fragments in its active window.
 
+Each offscreen session creates the decoder worker before resetting and feeding CMAF samples; a missing decoder worker cannot silently consume the video clock without decoding. Preparation has bounded progress checks and reports an error when no PCM/JOC profile becomes available. The content controller sends a throttled, signed-URL-free session heartbeat so a restarted MV3 service worker can ask the page to re-register its in-memory manifest session.
+
 ## Synchronization and failure behavior
 
 The content controller reports `requestVideoFrameCallback().mediaTime` where available and falls back to `video.currentTime`. The offscreen document reports `AudioContext.getOutputTimestamp()`, `baseLatency`, and `outputLatency` for diagnostics. AudioWorklet consumes timestamped PCM only when the queue is aligned to the latest video media sample; future audio waits and stale audio is trimmed. Pause/buffering suspends audible output; CMAF preparation may continue only up to the bounded PCM queue limit so startup cannot deadlock. Seek/media changes increment generation and restart from the target sidx range.

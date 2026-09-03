@@ -73,9 +73,15 @@ function tabIdFromSender(sender: ChromeMessageSender): number | null {
   return tabId !== undefined && Number.isSafeInteger(tabId) && tabId > 0 ? tabId : null;
 }
 
+function requestSessionFromContent(tabId: number): void {
+  void chrome.tabs.sendMessage(tabId, {target: 'background', type: 'request-session'}).catch(() => undefined);
+}
+
 async function handleContentMessage(message: RuntimeMessage, tabId: number): Promise<void> {
   if (message.target !== 'background') return;
   switch (message.type) {
+    case 'request-session':
+      return;
     case 'start': {
       if (!isBilibiliVideoPage(message.pageUrl)) return;
       const candidate = approvedCandidate(message.pageUrl, message.candidates);
@@ -109,6 +115,13 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number): Pro
       }
       await sendToOffscreen({target: 'offscreen', type: 'start', tabId, pageUrl: session.pageUrl, mediaKey: session.mediaKey, candidate: session.candidate, generation: session.generation + 1, videoTimeSamples: session.videoTimeSamples, dialnorm: session.dialnorm});
       sessions.set(tabId, {...session, generation: session.generation + 1, started: true});
+      return;
+    }
+    case 'session-heartbeat': {
+      const session = sessions.get(tabId);
+      if (session === undefined || !session.started || session.generation !== message.generation || session.pageUrl !== message.pageUrl || mediaKeyEquals(message.mediaKey, session.mediaKey) === false) {
+        requestSessionFromContent(tabId);
+      }
       return;
     }
     case 'video-clock': {

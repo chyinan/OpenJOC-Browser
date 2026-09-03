@@ -11,6 +11,8 @@ import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from '
 const SAMPLE_RATE = 48_000;
 const MAX_SEGMENTS_PER_WINDOW = 2;
 const PUMP_THRESHOLD_SAMPLES = SAMPLE_RATE * 2;
+const PREPARATION_TIMEOUT_MS = 15_000;
+const DECODER_PROGRESS_TIMEOUT_MS = 10_000;
 
 type WorkletStats = Readonly<{
   readonly queuedAudioMs: number;
@@ -40,6 +42,7 @@ type Session = {
   isPaused: boolean;
   isBuffering: boolean;
   phase: 'preparing' | 'ready' | 'active' | 'paused' | 'buffering';
+  preparationTimer: number | null;
 };
 
 type PendingProgress = Readonly<{
@@ -115,6 +118,9 @@ function sendStatus(
     audioPerformanceTime: outputClock.performanceTime,
     baseLatencyMs: outputClock.baseLatencyMs,
     outputLatencyMs: outputClock.outputLatencyMs,
+    decodedAccessUnits: decoder?.decodedAccessUnits ?? 0,
+    outputFrames: decoder?.outputFrames ?? 0,
+    outputSamples: decoder?.outputSamples ?? 0,
   };
   const message: RuntimeMessage = {target: 'background', type: 'offscreen-status', tabId: session.request.tabId, generation: session.request.generation, phase, reason, inbandJocConfirmed: session.isJocConfirmed, profile: decoder?.profile ?? null, metrics};
   chrome.runtime.sendMessage(message).catch(() => undefined);
@@ -188,7 +194,25 @@ function resetAudio(generation: number): void {
 function waitForDecoderProgress(generation: number, accessUnits: number): Promise<void> {
   if (latestDecoderStatus !== null && latestDecoderStatus.decodedAccessUnits >= accessUnits) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
-    pendingProgress.push({generation, accessUnits, resolve, reject});
+    let timeoutId: number | null = null;
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      callback();
+    };
+    const pending: PendingProgress = {
+      generation,
+      accessUnits,
+      resolve: () => finish(resolve),
+      reject: (error: Error) => finish(() => reject(error)),
+    };
+    pendingProgress.push(pending);
+    timeoutId = window.setTimeout((): void => {
+      pendingProgress = pendingProgress.filter((entry) => entry !== pending);
+      pending.reject(new Error('OpenJOC decoder made no progress while decoding CMAF audio'));
+    }, DECODER_PROGRESS_TIMEOUT_MS);
   });
 }
 
@@ -214,6 +238,10 @@ function handleWorkerMessage(message: WorkerMessage): void {
     resolveDecoderProgress(message.status);
     if (message.status.profile !== null && message.status.profile.length > 0) {
       session.isJocConfirmed = true;
+      if (session.preparationTimer !== null) {
+        window.clearTimeout(session.preparationTimer);
+        session.preparationTimer = null;
+      }
       if (!session.isNativeMuted && (session.phase === 'preparing' || session.phase === 'paused' || session.phase === 'buffering')) {
         session.phase = 'ready';
         sendStatus('ready', null, session);
@@ -233,9 +261,10 @@ async function pumpSegments(session: Session): Promise<void> {
   if (!isCurrentSession(session) || session.index === null || session.isStreaming) return;
   const references = session.index.index.references.slice(session.nextReferenceIndex, session.nextReferenceIndex + MAX_SEGMENTS_PER_WINDOW);
   if (references.length === 0) {
-    worker?.postMessage({type: 'end-cmaf', generation: session.request.generation} satisfies WorkerCommand);
+    ensureWorker().postMessage({type: 'end-cmaf', generation: session.request.generation} satisfies WorkerCommand);
     return;
   }
+  const decoderWorker = ensureWorker();
   session.isStreaming = true;
   try {
     let firstSample = (latestDecoderStatus?.decodedAccessUnits ?? 0) === 0;
@@ -246,13 +275,19 @@ async function pumpSegments(session: Session): Promise<void> {
       for (const sample of samples) {
         if (!isCurrentSession(session)) return;
         const buffer = sample.bytes.slice().buffer;
-        worker?.postMessage({type: 'decode-cmaf-sample', generation: session.request.generation, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm} satisfies WorkerCommand, [buffer]);
+        decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.request.generation, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm} satisfies WorkerCommand, [buffer]);
         firstSample = false;
         accessUnits += 1;
         await waitForDecoderProgress(session.request.generation, accessUnits);
       }
       session.nextReferenceIndex += 1;
       session.windowEndSamples = Math.max(session.windowEndSamples, reference.ptsSamples + reference.durationSamples);
+    }
+    if ((latestDecoderStatus?.decodedAccessUnits ?? 0) === 0) {
+      throw new Error('OpenJOC did not decode any CMAF audio access units');
+    }
+    if (latestDecoderStatus === null || latestDecoderStatus.profile === null || latestDecoderStatus.profile.length === 0) {
+      throw new Error('decoded CMAF audio did not report an in-band JOC profile');
     }
   } catch (error: unknown) {
     if (!session.abort.signal.aborted) await failSession(error instanceof Error ? error.message : 'failed to fetch Bilibili CMAF media');
@@ -340,10 +375,14 @@ function validatePageRangeResponse(response: PageRangeResponse, start: number, e
 
 async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>): Promise<void> {
   await stopSession(false);
-  const session: Session = {request, abort: new AbortController(), index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: false, isBuffering: false, phase: 'preparing'};
+  const session: Session = {request, abort: new AbortController(), index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: false, isBuffering: false, phase: 'preparing', preparationTimer: null};
   currentSession = session;
+  session.preparationTimer = window.setTimeout((): void => {
+    if (isCurrentSession(session) && !session.isJocConfirmed) void failSession('OpenJOC preparation timed out before JOC PCM became available');
+  }, PREPARATION_TIMEOUT_MS);
   latestVideoMediaSamples = request.videoTimeSamples;
   const context = await ensureAudio();
+  ensureWorker();
   resetAudio(request.generation);
   await context.resume();
   sendStatus('preparing', null, session);
@@ -377,6 +416,8 @@ async function stopSession(announce: boolean): Promise<void> {
   const session = currentSession;
   if (session === null) return;
   session.abort.abort();
+  if (session.preparationTimer !== null) window.clearTimeout(session.preparationTimer);
+  session.preparationTimer = null;
   currentSession = null;
   resetAudio(session.request.generation + 1);
   if (audioContext !== null) await audioContext.suspend();
@@ -387,6 +428,8 @@ async function failSession(reason: string): Promise<void> {
   const session = currentSession;
   if (session === null) return;
   session.abort.abort();
+  if (session.preparationTimer !== null) window.clearTimeout(session.preparationTimer);
+  session.preparationTimer = null;
   sendStatus('error', reason, session);
   currentSession = null;
   resetAudio(session.request.generation + 1);
