@@ -5,7 +5,7 @@ import {parseCmafFragment, type CmafSample, type CmafSegmentReference} from './c
 import {selectCmafSegmentWindow} from './cmaf-window.js';
 import {isRuntimeMessage, type PlaybackMetrics, type RuntimeMessage} from './extension-protocol.js';
 import {sanitizeMediaUrl} from './media-url-policy.js';
-import {createDriftMetrics, recordDriftSample, type DriftMetrics} from './sync-state.js';
+import {createDriftMetrics, recordDriftSample, resumeAudioPhase, type DriftMetrics} from './sync-state.js';
 import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
 
 const SAMPLE_RATE = 48_000;
@@ -407,9 +407,9 @@ function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type
   worker?.postMessage({type: message.paused || message.buffering ? 'pause' : 'resume', generation: message.generation} satisfies WorkerCommand);
   if (message.paused || message.buffering) {
     session.phase = message.buffering ? 'buffering' : 'paused';
-  } else if (session.isNativeMuted) {
-    if (audioContext !== null) void audioContext.resume();
-    session.phase = 'active';
+  } else {
+    session.phase = resumeAudioPhase(session.phase, {isJocConfirmed: session.isJocConfirmed, isNativeMuted: session.isNativeMuted});
+    if (session.isNativeMuted && audioContext !== null) void audioContext.resume();
   }
   sendStatus(session.phase, null, session);
   if (!session.isStreaming && session.index !== null && message.mediaTimeSamples + PUMP_THRESHOLD_SAMPLES >= session.windowEndSamples) void pumpSegments(session);

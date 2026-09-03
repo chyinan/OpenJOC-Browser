@@ -31,6 +31,13 @@ export type DriftMetrics = Readonly<{
   readonly maxMs: number | null;
 }>;
 
+export type AudioLifecyclePhase = 'preparing' | 'ready' | 'active' | 'paused' | 'buffering';
+
+export type ResumeAudioPhaseOptions = Readonly<{
+  readonly isJocConfirmed: boolean;
+  readonly isNativeMuted: boolean;
+}>;
+
 const SYNC_TOLERANCE_SAMPLES = 2_400;
 const MAX_DRIFT_SAMPLES = 256;
 
@@ -49,6 +56,16 @@ export function createSyncState(): SyncState {
 /** Creates an empty bounded absolute-drift sample window. */
 export function createDriftMetrics(): DriftMetrics {
   return {samples: [], p50Ms: null, p95Ms: null, maxMs: null};
+}
+
+/** Returns the lifecycle phase after the video master resumes playback. */
+export function resumeAudioPhase(
+  phase: AudioLifecyclePhase,
+  options: ResumeAudioPhaseOptions,
+): AudioLifecyclePhase {
+  if (phase !== 'paused' && phase !== 'buffering') return phase;
+  if (options.isNativeMuted) return 'active';
+  return options.isJocConfirmed ? 'ready' : 'preparing';
 }
 
 /** Adds one drift observation and recalculates bounded p50/p95/max metrics. */

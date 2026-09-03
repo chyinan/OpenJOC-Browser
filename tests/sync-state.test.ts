@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-import {advanceSyncState, computeSyncAction, createDriftMetrics, createSyncState, recordDriftSample, type SyncEvent} from '../src/sync-state.js';
+import {advanceSyncState, computeSyncAction, createDriftMetrics, createSyncState, recordDriftSample, resumeAudioPhase, type SyncEvent} from '../src/sync-state.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -46,6 +46,9 @@ function run(): void {
   for (const value of [1, 4, 9, 16, 25]) drift = recordDriftSample(drift, value);
   assert(drift.p50Ms === 9, 'drift p50 uses absolute samples');
   assert(drift.p95Ms === 25 && drift.maxMs === 25, 'drift p95 and max use bounded samples');
+  assert(resumeAudioPhase('paused', {isJocConfirmed: false, isNativeMuted: false}) === 'preparing', 'resume returns unconfirmed playback to preparing');
+  assert(resumeAudioPhase('paused', {isJocConfirmed: true, isNativeMuted: false}) === 'ready', 'resume returns confirmed unmuted playback to ready');
+  assert(resumeAudioPhase('paused', {isJocConfirmed: true, isNativeMuted: true}) === 'active', 'resume returns muted playback to active');
 }
 
 run();
