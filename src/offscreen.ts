@@ -52,6 +52,7 @@ type PendingProgress = Readonly<{
 let worker: Worker | null = null;
 let audioContext: AudioContext | null = null;
 let audioNode: AudioWorkletNode | null = null;
+let silentKeepAlive: ConstantSourceNode | null = null;
 let currentSession: Session | null = null;
 let latestDecoderStatus: DecoderWorkerStatus | null = null;
 let latestWorkletStats: WorkletStats = {
@@ -147,8 +148,15 @@ async function ensureAudio(): Promise<AudioContext> {
       }
     };
     nextNode.connect(nextContext.destination);
+    const silentGain = nextContext.createGain();
+    silentGain.gain.value = 0;
+    const silentSource = nextContext.createConstantSource();
+    silentSource.offset.value = 0;
+    silentSource.connect(silentGain).connect(nextContext.destination);
+    silentSource.start();
     audioContext = nextContext;
     audioNode = nextNode;
+    silentKeepAlive = silentSource;
     return nextContext;
   } catch (error: unknown) {
     await nextContext.close();
@@ -336,8 +344,8 @@ async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen
   currentSession = session;
   latestVideoMediaSamples = request.videoTimeSamples;
   const context = await ensureAudio();
-  await context.suspend();
   resetAudio(request.generation);
+  await context.resume();
   sendStatus('preparing', null, session);
   try {
     session.index = await fetchIndexWithFallback(request, session.abort.signal);
@@ -398,7 +406,6 @@ function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type
   audioNode?.port.postMessage({type: 'clock', generation: message.generation, mediaTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
   worker?.postMessage({type: message.paused || message.buffering ? 'pause' : 'resume', generation: message.generation} satisfies WorkerCommand);
   if (message.paused || message.buffering) {
-    if (audioContext !== null) void audioContext.suspend();
     session.phase = message.buffering ? 'buffering' : 'paused';
   } else if (session.isNativeMuted) {
     if (audioContext !== null) void audioContext.resume();

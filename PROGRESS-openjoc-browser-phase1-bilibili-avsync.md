@@ -1,6 +1,6 @@
 # Progress: Bilibili JOC CMAF Playback and Video-Master A/V Sync
 
-> Created: 2026-09-03 | Status: debugging live-site CMAF 403
+> Created: 2026-09-03 | Status: debugging live-site lifecycle stall
 
 ## Goal
 
@@ -53,3 +53,4 @@ Perform the human smoke on an entitled standard Bilibili Dolby/JOC VOD: enable, 
 - Live smoke follow-up: user reproduced `403 for bytes 0-8191` after the initial-range fix; the next isolated change preserves the full Bilibili page Referer policy observed in native CDP requests.
 - Live smoke follow-up: Referer policy also did not remove 403; added fail-closed page-context fallback for exact manifest-discovered media ranges, with tab/generation/URL/Content-Range/size validation.
 - Live smoke follow-up: page-context fallback removed the 403 and video time advanced, but preparation could stall when pause/buffering blocked CMAF backpressure; added bounded CMAF-only decode backpressure that does not wait on pause.
+- Live smoke follow-up: repeated pause/resume reached `heartbeat lost`; root cause matched Offscreen `AUDIO_PLAYBACK` idle lifetime while the context was suspended during preparation. Added a zero-gain keepalive graph and kept the offscreen context running while Worklet output remains silent for pause/buffering.
