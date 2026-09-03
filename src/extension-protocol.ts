@@ -48,6 +48,8 @@ export type PlaybackMetrics = Readonly<{
 export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'toggle'}>
   | Readonly<{target: 'background'; type: 'request-manifest'; pageUrl: string}>
+  | Readonly<{target: 'background'; type: 'page-media-range-request'; tabId: number; generation: number; requestId: string; url: string; start: number; end: number}>
+  | Readonly<{target: 'background'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; buffer: ArrayBuffer}>
   | Readonly<{target: 'background'; type: 'start'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'}>
   | Readonly<{target: 'background'; type: 'manifest'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>}>
   | Readonly<{target: 'background'; type: 'video-clock'; pageUrl: string; mediaKey: MediaKey; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
@@ -59,6 +61,7 @@ export type RuntimeMessage =
   | Readonly<{target: 'offscreen'; type: 'native-muted'; tabId: number; generation: number}>
   | Readonly<{target: 'offscreen'; type: 'disable'; tabId: number; generation: number}>
   | Readonly<{target: 'offscreen'; type: 'dialnorm'; tabId: number; generation: number; mode: 'calibrated' | 'unity'}>
+  | Readonly<{target: 'offscreen'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; buffer: ArrayBuffer}>
   | Readonly<{target: 'background'; type: 'offscreen-status'; tabId: number; generation: number; phase: PlaybackPhase; reason: string | null; inbandJocConfirmed: boolean; profile: string | null; metrics: PlaybackMetrics}>;
 
 /** Validates untrusted MAIN-world data before it reaches extension code. */
@@ -77,6 +80,17 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (!isRecord(value) || typeof value.target !== 'string' || typeof value.type !== 'string') return false;
   if (value.target === 'background' && value.type === 'toggle') return true;
   if (value.target === 'background' && value.type === 'request-manifest') return typeof value.pageUrl === 'string';
+  if (value.target === 'background' && value.type === 'page-media-range-request') {
+    return isTabId(value.tabId) && isGeneration(value.generation) && isNonEmptyString(value.requestId)
+      && isNonEmptyString(value.url) && isNonNegativeFinite(value.start) && isNonNegativeFinite(value.end)
+      && Number.isSafeInteger(value.start) && Number.isSafeInteger(value.end) && value.end >= value.start
+      && value.end - value.start + 1 <= 4 * 1024 * 1024;
+  }
+  if (value.target === 'background' && value.type === 'page-media-range-response') {
+    return isTabId(value.tabId) && isGeneration(value.generation) && isNonEmptyString(value.requestId)
+      && isNonNegativeFinite(value.status) && Number.isSafeInteger(value.status)
+      && isNullableString(value.contentRange) && isNullableString(value.error) && isArrayBuffer(value.buffer);
+  }
   if (value.target === 'background' && value.type === 'start') {
     return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates)
       && isGeneration(value.generation) && isNonNegativeFinite(value.videoTimeSamples)
@@ -113,6 +127,11 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   }
   if (value.target === 'offscreen' && value.type === 'dialnorm') {
     return isTabId(value.tabId) && isGeneration(value.generation) && (value.mode === 'calibrated' || value.mode === 'unity');
+  }
+  if (value.target === 'offscreen' && value.type === 'page-media-range-response') {
+    return isTabId(value.tabId) && isGeneration(value.generation) && isNonEmptyString(value.requestId)
+      && isNonNegativeFinite(value.status) && Number.isSafeInteger(value.status)
+      && isNullableString(value.contentRange) && isNullableString(value.error) && isArrayBuffer(value.buffer);
   }
   if (value.target === 'background' && value.type === 'offscreen-status') {
       return isTabId(value.tabId) && isGeneration(value.generation) && isPlaybackPhase(value.phase)
@@ -173,6 +192,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
+}
+
+function isArrayBuffer(value: unknown): value is ArrayBuffer {
+  return value instanceof ArrayBuffer;
 }
 
 function isNullableString(value: unknown): value is string | null {

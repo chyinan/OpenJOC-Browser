@@ -51,3 +51,4 @@ Perform the human smoke on an entitled standard Bilibili Dolby/JOC VOD: enable, 
 - Commits: Browser `5ef3797` plus UI status `f2785cf`; OpenJOC `7061215`.
 - Review status: manual security/media review completed; two delegated code-review attempts timed out and were stopped, so no delegated zero-issue result is claimed.
 - Live smoke follow-up: user reproduced `403 for bytes 0-8191` after the initial-range fix; the next isolated change preserves the full Bilibili page Referer policy observed in native CDP requests.
+- Live smoke follow-up: Referer policy also did not remove 403; added fail-closed page-context fallback for exact manifest-discovered media ranges, with tab/generation/URL/Content-Range/size validation.

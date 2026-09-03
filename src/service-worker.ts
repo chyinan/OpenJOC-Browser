@@ -14,8 +14,17 @@ type BilibiliSession = {
   readonly started: boolean;
 };
 
+type PendingPageRange = Readonly<{
+  readonly tabId: number;
+  readonly generation: number;
+  readonly url: string;
+  readonly start: number;
+  readonly end: number;
+}>;
+
 const OFFSCREEN_PATH = 'offscreen.html';
 const sessions = new Map<number, BilibiliSession>();
+const pendingPageRanges = new Map<string, PendingPageRange>();
 let offscreenCreation: Promise<void> | null = null;
 
 function isBilibiliVideoPage(value: string): boolean {
@@ -126,6 +135,14 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number): Pro
       if (session !== undefined) sessions.set(tabId, {...session, started: false, generation: Math.max(message.generation, session.generation)});
       return;
     }
+    case 'page-media-range-response': {
+      const session = sessions.get(tabId);
+      const pending = pendingPageRanges.get(message.requestId);
+      if (session === undefined || pending === undefined || pending.tabId !== tabId || pending.generation !== message.generation || message.generation !== session.generation || message.buffer.byteLength > pending.end - pending.start + 1) return;
+      pendingPageRanges.delete(message.requestId);
+      await sendToOffscreen({target: 'offscreen', type: 'page-media-range-response', tabId, generation: message.generation, requestId: message.requestId, status: message.status, contentRange: message.contentRange, error: message.error, buffer: message.buffer});
+      return;
+    }
     case 'dialnorm': {
       const session = sessions.get(tabId);
       if (session === undefined) return;
@@ -141,6 +158,23 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number): Pro
   }
 }
 
+async function handleOffscreenRangeRequest(message: Extract<RuntimeMessage, {target: 'background'; type: 'page-media-range-request'}>): Promise<void> {
+  const session = sessions.get(message.tabId);
+  if (session === undefined || !session.started || message.generation !== session.generation) return;
+  if (message.end - message.start + 1 > 4 * 1024 * 1024 || !isAllowedBilibiliMediaUrl(message.url, session.pageUrl) || !candidateUrls(session.candidate).includes(message.url)) return;
+  pendingPageRanges.set(message.requestId, {tabId: message.tabId, generation: message.generation, url: message.url, start: message.start, end: message.end});
+  try {
+    await chrome.tabs.sendMessage(message.tabId, message);
+  } catch (error: unknown) {
+    pendingPageRanges.delete(message.requestId);
+    throw error;
+  }
+}
+
+function candidateUrls(candidate: BilibiliAudioCandidate): ReadonlyArray<string> {
+  return [candidate.baseUrl, ...candidate.backupUrls];
+}
+
 function mediaKeyEquals(left: MediaKey, right: MediaKey): boolean {
   return left.bvid === right.bvid && left.aid === right.aid && left.cid === right.cid;
 }
@@ -154,8 +188,11 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessage
   if (!isRuntimeMessage(rawMessage)) return;
   if (rawMessage.target === 'background') {
     const senderTabId = tabIdFromSender(sender);
-    if (senderTabId === null) return;
-    void handleContentMessage(rawMessage, senderTabId).catch(() => undefined);
+    if (senderTabId !== null) {
+      void handleContentMessage(rawMessage, senderTabId).catch(() => undefined);
+    } else if (sender.id === chrome.runtime.id && rawMessage.type === 'page-media-range-request') {
+      void handleOffscreenRangeRequest(rawMessage).catch(() => undefined);
+    }
     return;
   }
   return;

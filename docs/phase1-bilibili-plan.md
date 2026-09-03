@@ -30,7 +30,7 @@ Bilibili MAIN bridge
        -> physical Stereo (Speakers) output
 ```
 
-The MAIN bridge does not patch global fetch/XHR, MediaSource, SourceBuffer, `canPlayType`, or codec support. It observes the exact current `playurl` resource from `performance` and performs one targeted page-context read with the current session. The extension never exposes a generic page-requested fetch oracle.
+The MAIN bridge does not patch global fetch/XHR, MediaSource, SourceBuffer, `canPlayType`, or codec support. It observes the exact current `playurl` resource from `performance` and performs one targeted page-context read with the current session. If an extension-origin range receives 403, a strictly bounded fallback asks the current page context to fetch only a URL already present in the current manifest; the extension never exposes a generic page-requested fetch oracle.
 
 Browser code parses only BMFF transport structures: init `moov`/`mdhd`/`hdlr`/`stsd`, `sidx`, and fragment `moof`/`traf`/`tfhd`/`tfdt`/`trun`/`mdat`. E-AC-3/JOC/EMDF/OAMD semantics remain in OpenJOC Rust/WASM. `fetchCmafIndex()` starts with the observed small 8 KiB initialization range and each media request is bounded to 4 MiB; playback keeps at most two indexed fragments in its active window.
 
@@ -38,7 +38,7 @@ Browser code parses only BMFF transport structures: init `moov`/`mdhd`/`hdlr`/`s
 
 The content controller reports `requestVideoFrameCallback().mediaTime` where available and falls back to `video.currentTime`. The offscreen document reports `AudioContext.getOutputTimestamp()`, `baseLatency`, and `outputLatency` for diagnostics. AudioWorklet consumes timestamped PCM only when the queue is aligned to the latest video media sample; future audio waits and stale audio is trimmed. Pause/buffering suspends audio and decoding; seek/media changes increment generation and restart from the target sidx range.
 
-Native Bilibili audio is muted only after OpenJOC has reported a non-empty in-band profile and the PCM path is ready. Disable, malformed media, fetch failure, unsupported format/rate, and extension errors clear the OpenJOC queue and restore the prior `muted`, `volume`, and `defaultMuted` state.
+Native Bilibili audio is muted only after OpenJOC has reported a non-empty in-band profile and the PCM path is ready. Disable, malformed media, fetch failure, unsupported format/rate, and extension errors clear the OpenJOC queue and restore the prior `muted`, `volume`, and `defaultMuted` state. The page-context fallback is fail-closed on CORS, non-206, mismatched Content-Range, stale generation, or over-bound response.
 
 ## Tests and gates
 

@@ -1,6 +1,7 @@
 // pattern: Imperative Shell
 
 import {fetchCmafIndex, fetchCmafSegment, type CmafIndexSession} from './cmaf-fetcher.js';
+import {parseCmafFragment, type CmafSample, type CmafSegmentReference} from './cmaf-transport.js';
 import {selectCmafSegmentWindow} from './cmaf-window.js';
 import {isRuntimeMessage, type PlaybackMetrics, type RuntimeMessage} from './extension-protocol.js';
 import {sanitizeMediaUrl} from './media-url-policy.js';
@@ -65,6 +66,10 @@ let latestVideoMediaSamples: number | null = null;
 let driftMetrics: DriftMetrics = createDriftMetrics();
 let outputClock: OutputClock = {contextTime: null, performanceTime: null, baseLatencyMs: null, outputLatencyMs: null};
 let pendingProgress: Array<PendingProgress> = [];
+let pageRangeRequestSequence = 0;
+const pendingPageRanges = new Map<string, Readonly<{generation: number; resolve(response: PageRangeResponse): void; reject(error: Error): void}>>();
+
+type PageRangeResponse = Readonly<{readonly status: number; readonly contentRange: string | null; readonly error: string | null; readonly buffer: ArrayBuffer}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -228,7 +233,7 @@ async function pumpSegments(session: Session): Promise<void> {
     let firstSample = (latestDecoderStatus?.decodedAccessUnits ?? 0) === 0;
     for (const reference of references) {
       if (!isCurrentSession(session)) return;
-      const samples = await fetchCmafSegment(session.index, reference, session.abort.signal);
+      const samples = await fetchSegmentWithPageFallback(session.index, reference, session.abort.signal, session.request.tabId, session.request.generation);
       let accessUnits = latestDecoderStatus?.decodedAccessUnits ?? 0;
       for (const sample of samples) {
         if (!isCurrentSession(session)) return;
@@ -259,10 +264,70 @@ async function fetchIndexWithFallback(
       return await fetchCmafIndex({url, pageUrl: request.pageUrl, signal});
     } catch (error: unknown) {
       if (signal.aborted) throw error;
+      if (error instanceof Error && error.message.includes('status 403')) {
+        try {
+          const pageResponse = await requestPageRange(request.tabId, request.generation, url, 0, 8_191, signal);
+          if (pageResponse.status !== 206) throw new Error(`page-context CMAF range request returned status ${pageResponse.status}`);
+          return await fetchCmafIndex({
+            url,
+            pageUrl: request.pageUrl,
+            signal,
+            fetchImpl: async (): Promise<Response> => new Response(pageResponse.buffer, {status: pageResponse.status, headers: pageResponse.contentRange === null ? undefined : {'content-range': pageResponse.contentRange}}),
+          });
+        } catch (pageError: unknown) {
+          if (signal.aborted) throw pageError;
+          lastError = pageError instanceof Error ? pageError : new Error('page-context CMAF range fetch failed');
+          continue;
+        }
+      }
       lastError = error instanceof Error ? error : new Error('failed to fetch Bilibili CMAF initialization');
     }
   }
   throw lastError ?? new Error('Bilibili JOC stream unavailable');
+}
+
+async function requestPageRange(tabId: number, generation: number, url: string, start: number, end: number, signal: AbortSignal): Promise<PageRangeResponse> {
+  const requestId = `page-range-${tabId}-${generation}-${pageRangeRequestSequence}`;
+  pageRangeRequestSequence += 1;
+  const responsePromise = new Promise<PageRangeResponse>((resolve, reject) => {
+    pendingPageRanges.set(requestId, {generation, resolve, reject});
+  });
+  const timeoutId = window.setTimeout((): void => {
+    const pending = pendingPageRanges.get(requestId);
+    pendingPageRanges.delete(requestId);
+    pending?.reject(new Error('page-context media range request timed out'));
+  }, 10_000);
+  const message: RuntimeMessage = {target: 'background', type: 'page-media-range-request', tabId, generation, requestId, url, start, end};
+  chrome.runtime.sendMessage(message).catch((error: unknown) => {
+    const pending = pendingPageRanges.get(requestId);
+    pendingPageRanges.delete(requestId);
+    pending?.reject(error instanceof Error ? error : new Error('failed to request page-context media range'));
+  });
+  const abort = (): void => {
+    const pending = pendingPageRanges.get(requestId);
+    pendingPageRanges.delete(requestId);
+    pending?.reject(new Error('page-context media range request aborted'));
+  };
+  if (signal.aborted) abort();
+  else signal.addEventListener('abort', abort, {once: true});
+  try {
+    const response = await responsePromise;
+    validatePageRangeResponse(response, start, end);
+    return response;
+  } finally {
+    window.clearTimeout(timeoutId);
+    signal.removeEventListener('abort', abort);
+    pendingPageRanges.delete(requestId);
+  }
+}
+
+function validatePageRangeResponse(response: PageRangeResponse, start: number, end: number): void {
+  if (response.buffer.byteLength > end - start + 1) throw new Error('page-context CMAF range exceeded the requested bound');
+  if (response.status !== 206 || response.contentRange === null) return;
+  const match = /^bytes (\d+)-(\d+)\/\d+$/.exec(response.contentRange);
+  if (match === null || Number(match[1]) !== start || Number(match[2]) < start || Number(match[2]) > end || response.buffer.byteLength !== Number(match[2]) - start + 1) {
+    throw new Error('page-context CMAF Content-Range is invalid');
+  }
 }
 
 async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>): Promise<void> {
@@ -286,6 +351,17 @@ async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen
     void pumpSegments(session);
   } catch (error: unknown) {
     if (!session.abort.signal.aborted) await failSession(error instanceof Error ? error.message : 'failed to prepare Bilibili CMAF media');
+  }
+}
+
+async function fetchSegmentWithPageFallback(session: CmafIndexSession, reference: CmafSegmentReference, signal: AbortSignal, tabId: number, generation: number): Promise<ReadonlyArray<CmafSample>> {
+  try {
+    return await fetchCmafSegment(session, reference, signal);
+  } catch (error: unknown) {
+    if (signal.aborted || !(error instanceof Error) || !error.message.includes('status 403')) throw error;
+    const pageResponse = await requestPageRange(tabId, generation, session.url, reference.byteRangeStart, reference.byteRangeEnd, signal);
+    if (pageResponse.status !== 206) throw new Error(`page-context CMAF range request returned status ${pageResponse.status}`);
+    return parseCmafFragment(new Uint8Array(pageResponse.buffer), session.init.trackId);
   }
 }
 
@@ -360,6 +436,17 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown): void => {
       const session = currentSession;
       if (session === null) return;
       void startSession({...session.request, dialnorm: rawMessage.mode, videoTimeSamples: latestVideoMediaSamples ?? session.request.videoTimeSamples});
+      return;
+    }
+    case 'page-media-range-response': {
+      const pending = pendingPageRanges.get(rawMessage.requestId);
+      if (pending === undefined) return;
+      pendingPageRanges.delete(rawMessage.requestId);
+      if (pending.generation !== rawMessage.generation) {
+        pending.reject(new Error('page-context media response generation is stale'));
+        return;
+      }
+      pending.resolve({status: rawMessage.status, contentRange: rawMessage.contentRange, error: rawMessage.error, buffer: rawMessage.buffer});
       return;
     }
   }

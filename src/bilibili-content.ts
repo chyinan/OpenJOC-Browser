@@ -8,6 +8,8 @@ type ContentManifest = Readonly<{readonly source: 'openjoc-bilibili'; readonly t
 type ContentUnavailable = Readonly<{readonly source: 'openjoc-bilibili'; readonly type: 'unavailable'; readonly pageOrigin: string; readonly pageUrl: string; readonly reason: string}>;
 type ContentStatus = Readonly<{readonly target: 'background'; readonly type: 'offscreen-status'; readonly tabId: number; readonly generation: number; readonly phase: 'disabled' | 'preparing' | 'ready' | 'active' | 'paused' | 'buffering' | 'error'; readonly reason: string | null; readonly inbandJocConfirmed: boolean; readonly profile: string | null; readonly metrics: Readonly<Record<string, unknown>>}>;
 type ContentToggle = Readonly<{readonly target: 'background'; readonly type: 'toggle'}>;
+type ContentPageRangeRequest = Readonly<{readonly target: 'background'; readonly type: 'page-media-range-request'; readonly tabId: number; readonly generation: number; readonly requestId: string; readonly url: string; readonly start: number; readonly end: number}>;
+type ContentPageRangeResponse = Readonly<{readonly source: 'openjoc-bilibili'; readonly type: 'media-range-response'; readonly pageOrigin: string; readonly pageUrl: string; readonly requestId: string; readonly status: number; readonly contentRange: string | null; readonly error: string | null; readonly buffer: ArrayBuffer}>;
 
 const PAGE_ORIGIN = 'https://www.bilibili.com';
 const MEDIA_SUFFIX = '.bilivideo.com';
@@ -23,6 +25,7 @@ let lastStatusAt = performance.now();
 let lastLocation = location.href;
 let clockTimer: number | null = null;
 let frameCallbackId: number | null = null;
+const pendingPageRangeRequests = new Map<string, ContentPageRangeRequest>();
 
 const panel = document.createElement('div');
 const shadow = panel.attachShadow({mode: 'closed'});
@@ -96,6 +99,18 @@ function isStatusMessage(value: unknown): value is ContentStatus {
 function isToggleMessage(value: unknown): value is ContentToggle {
   const candidate = record(value);
   return candidate !== null && candidate.target === 'background' && candidate.type === 'toggle';
+}
+
+function isPageRangeRequest(value: unknown): value is ContentPageRangeRequest {
+  const candidate = record(value);
+  const start = candidate?.start;
+  const end = candidate?.end;
+  return candidate !== null && candidate.target === 'background' && candidate.type === 'page-media-range-request' && isFiniteNumber(candidate.tabId) && Number.isSafeInteger(candidate.tabId) && isFiniteNumber(candidate.generation) && Number.isSafeInteger(candidate.generation) && isString(candidate.requestId) && candidate.requestId.length > 0 && isString(candidate.url) && isFiniteNumber(start) && isFiniteNumber(end) && Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 0 && end >= start && end - start + 1 <= 4 * 1024 * 1024;
+}
+
+function isPageRangeResponse(value: unknown): value is ContentPageRangeResponse {
+  const candidate = record(value);
+  return candidate !== null && candidate.source === 'openjoc-bilibili' && candidate.type === 'media-range-response' && candidate.pageOrigin === PAGE_ORIGIN && isString(candidate.pageUrl) && isString(candidate.requestId) && isFiniteNumber(candidate.status) && Number.isSafeInteger(candidate.status) && (candidate.contentRange === null || isString(candidate.contentRange)) && (candidate.error === null || isString(candidate.error)) && candidate.buffer instanceof ArrayBuffer;
 }
 
 function send(message: unknown): void {
@@ -260,6 +275,13 @@ dialnormSelect.addEventListener('change', (): void => {
 
 window.addEventListener('message', (event: MessageEvent<unknown>): void => {
   if (event.source !== window || event.origin !== PAGE_ORIGIN) return;
+  if (isPageRangeResponse(event.data)) {
+    const pending = pendingPageRangeRequests.get(event.data.requestId);
+    if (pending === undefined || pending.generation !== videoGeneration) return;
+    pendingPageRangeRequests.delete(event.data.requestId);
+    send({target: 'background', type: 'page-media-range-response', tabId: pending.tabId, generation: pending.generation, requestId: pending.requestId, status: event.data.status, contentRange: event.data.contentRange, error: event.data.error, buffer: event.data.buffer});
+    return;
+  }
   if (isUnavailableMessage(event.data)) {
     statusLabel.textContent = `JOC stream unavailable: ${event.data.reason}`;
     if (isOpenJocRequested) {
@@ -294,6 +316,14 @@ chrome.runtime.onMessage.addListener((message: unknown): void => {
       enableOpenJoc();
     }
   }
+});
+
+chrome.runtime.onMessage.addListener((message: unknown, sender: ChromeMessageSender): void => {
+  if (!isPageRangeRequest(message) || sender.id !== chrome.runtime.id || latestManifest === null || message.generation !== videoGeneration) return;
+  const candidateUrls = latestManifest.candidates.flatMap((candidate) => [candidate.baseUrl, ...candidate.backupUrls]);
+  if (!candidateUrls.includes(message.url)) return;
+  pendingPageRangeRequests.set(message.requestId, message);
+  window.postMessage({source: 'openjoc-content', type: 'fetch-media-range', requestId: message.requestId, url: message.url, start: message.start, end: message.end}, PAGE_ORIGIN);
 });
 
 clockTimer = window.setInterval((): void => {

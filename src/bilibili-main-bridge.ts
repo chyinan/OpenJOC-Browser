@@ -23,6 +23,7 @@ const API_ORIGIN = 'https://api.bilibili.com';
 const BRIDGE_SOURCE = 'openjoc-bilibili';
 let lastManifestUrl: string | null = null;
 let manifestRequestInFlight = false;
+const knownMediaUrls = new Set<string>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -138,6 +139,18 @@ function isCurrentManifestUrl(value: string): boolean {
   }
 }
 
+function isAllowedMediaRangeMessage(value: Record<string, unknown>): boolean {
+  if (value.source !== 'openjoc-content' || value.type !== 'fetch-media-range' || !nonEmptyString(value.requestId) || !nonEmptyString(value.url) || !Number.isSafeInteger(value.start) || !Number.isSafeInteger(value.end)) return false;
+  const start = value.start as number;
+  const end = value.end as number;
+  try {
+    const url = new URL(value.url as string);
+    return knownMediaUrls.has(value.url as string) && url.protocol === 'https:' && url.username === '' && url.password === '' && (url.hostname === 'bilivideo.com' || url.hostname.endsWith('.bilivideo.com')) && url.pathname.toLowerCase().endsWith('.m4s') && start >= 0 && end >= start && end - start + 1 <= 4 * 1024 * 1024;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchManifest(url: string): Promise<void> {
   if (manifestRequestInFlight || !isCurrentManifestUrl(url)) return;
   manifestRequestInFlight = true;
@@ -154,6 +167,10 @@ async function fetchManifest(url: string): Promise<void> {
       emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: 'JOC stream unavailable for the current Bilibili session'});
       return;
     }
+    candidates.forEach((candidate) => {
+      knownMediaUrls.add(candidate.baseUrl);
+      candidate.backupUrls.forEach((url) => knownMediaUrls.add(url));
+    });
     emit({source: BRIDGE_SOURCE, type: 'manifest', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, mediaKey: identity, candidates});
   } catch {
     emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: 'failed to read the current Bilibili playback manifest'});
@@ -170,8 +187,28 @@ function scan(force = false): void {
 }
 
 window.addEventListener('message', (event: MessageEvent<unknown>): void => {
-  if (event.source !== window || !isRecord(event.data) || event.data.source !== 'openjoc-content' || event.data.type !== 'request-manifest') return;
-  scan(true);
+  if (event.source !== window || !isRecord(event.data)) return;
+  if (event.data.source === 'openjoc-content' && event.data.type === 'request-manifest') {
+    scan(true);
+    return;
+  }
+  if (!isAllowedMediaRangeMessage(event.data)) return;
+  const requestId = event.data.requestId as string;
+  const url = event.data.url as string;
+  const start = event.data.start as number;
+  const end = event.data.end as number;
+  void (async (): Promise<void> => {
+    try {
+      const response = await fetch(url, {credentials: 'include', headers: {Range: `bytes=${start}-${end}`}, referrerPolicy: 'no-referrer-when-downgrade'});
+      const contentRange = response.headers.get('content-range');
+      const buffer = response.status === 206 ? await response.arrayBuffer() : new ArrayBuffer(0);
+      const message = {source: BRIDGE_SOURCE, type: 'media-range-response', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, requestId, status: response.status, contentRange, error: null, buffer};
+      window.postMessage(message, PAGE_ORIGIN, buffer.byteLength === 0 ? [] : [buffer]);
+    } catch (error: unknown) {
+      const message = {source: BRIDGE_SOURCE, type: 'media-range-response', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, requestId, status: 0, contentRange: null, error: error instanceof Error ? error.message : 'page-context CMAF range fetch failed', buffer: new ArrayBuffer(0)};
+      window.postMessage(message, PAGE_ORIGIN);
+    }
+  })();
 });
 
 window.setInterval((): void => scan(), 1_000);
