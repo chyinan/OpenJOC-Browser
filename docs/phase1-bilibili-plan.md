@@ -46,6 +46,8 @@ Native Bilibili audio is muted only after OpenJOC has reported a non-empty in-ba
 
 When a background/minimized page temporarily stops delivering video clock callbacks, offscreen extrapolates from the last real clock only for Worklet clock advancement and bounded CMAF prefetch. It never replaces the page's clock when a real update is available; pause, buffering, seek, and media-change events remain authoritative.
 
+The content controller suppresses coarse timer/timeupdate clocks while a playing video is hidden, preventing stale background timestamps from repeatedly re-locking the audio clock. The AudioWorklet advances its running master media clock by each rendered output quantum and treats real page clocks as authoritative re-lock points; pause, seek, buffering, visibility, and recovery events force an immediate clock update.
+
 The CMAF path keeps a 3-second PCM cushion and begins the next bounded fragment window with 4 seconds of compressed-media lead to absorb background scheduling and network jitter. The local raw-file path retains its original 1-second decode budget.
 
 The offscreen `AudioContext` requests the `playback` latency profile and is periodically resumed if an active, non-paused session observes a non-running context, reducing sensitivity to background-window audio scheduling.

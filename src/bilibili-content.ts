@@ -166,11 +166,12 @@ function emitSessionHeartbeat(): void {
   send({target: 'background', type: 'session-heartbeat', pageUrl: location.href, mediaKey: manifest.mediaKey, generation: videoGeneration});
 }
 
-function emitClock(): void {
+function emitClock(force = false): void {
   emitSessionHeartbeat();
   const currentVideo = video;
   const manifest = latestManifest;
   if (currentVideo === null || manifest === null || !isOpenJocRequested) return;
+  if (!force && document.visibilityState === 'hidden' && !currentVideo.paused) return;
   const currentTime = Number.isFinite(currentVideo.currentTime) ? Math.max(0, currentVideo.currentTime) : 0;
   send({target: 'background', type: 'video-clock', pageUrl: location.href, mediaKey: manifest.mediaKey, generation: videoGeneration, mediaTimeSamples: Math.round(currentTime * SAMPLE_RATE), paused: currentVideo.paused, buffering: currentVideo.readyState < 3, playbackRate: currentVideo.playbackRate, expectedDisplayTimeMs: null});
 }
@@ -208,7 +209,7 @@ function attachVideo(nextVideo: HTMLVideoElement): void {
     nextVideo.addEventListener(eventName, (): void => {
       if (isOpenJocRequested && eventName === 'volumechange') nextVideo.muted = true;
       if (isOpenJocRequested && eventName === 'seeking') videoGeneration += 1;
-      emitClock();
+      emitClock(eventName !== 'timeupdate' && eventName !== 'volumechange');
       updateDetails();
     });
   }
@@ -256,6 +257,7 @@ function updateDetails(): void {
     workletPlayedQuantumCount: metrics?.workletPlayedQuantumCount ?? 0,
     workletSilentQuantumCount: metrics?.workletSilentQuantumCount ?? 0,
     workletLastReadType: metrics?.workletLastReadType ?? null,
+    resyncCount: metrics?.resyncCount ?? 0,
     underruns: metrics?.underrunCount ?? 0,
     media: metrics?.mediaUrl ?? null,
   }, null, 2);
@@ -368,6 +370,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender: ChromeMessageSen
   pendingPageRangeRequests.set(message.requestId, message);
   window.postMessage({source: 'openjoc-content', type: 'fetch-media-range', requestId: message.requestId, url: message.url, start: message.start, end: message.end}, PAGE_ORIGIN);
 });
+
+document.addEventListener('visibilitychange', (): void => emitClock(true));
 
 clockTimer = window.setInterval((): void => {
   const nextVideo = findMasterVideo();

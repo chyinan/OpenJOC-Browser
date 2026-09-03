@@ -2,6 +2,7 @@
 
 import {PcmQueue} from './audio-queue.js';
 import {TimestampedPcmQueue} from './timestamped-pcm-queue.js';
+import {advanceMediaTimeSamples} from './video-clock-estimate.js';
 
 type ProcessorMessage =
   | Readonly<{type: 'pcm'; generation: number; sequence: number; buffer: ArrayBuffer; ptsSamples: number | null}>
@@ -142,7 +143,7 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
         const result = this.timestampedQueue.readForMasterClock(output, this.masterMediaSamples ?? 0, 2_400, this.isEndOfStream);
         if (result.type === 'trim') this.resyncCount += 1;
         this.lastTimestampedReadType = result.type;
-        if (result.mediaSamples === null) this.silentQuantumCount += 1;
+        if (result.type === 'wait' || result.mediaSamples === null) this.silentQuantumCount += 1;
         else this.playedQuantumCount += 1;
       } else {
         this.queue.read(output, this.isEndOfStream);
@@ -150,6 +151,7 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
     } else if (output !== undefined) {
       output.forEach((channel) => channel.fill(0));
     }
+    this.masterMediaSamples = advanceMediaTimeSamples(this.masterMediaSamples, output?.[0]?.length ?? 0, output !== undefined && !this.isPaused && !this.isBuffering);
     this.processCount += 1;
     if (this.processCount % 32 === 0) {
       this.postStats();
