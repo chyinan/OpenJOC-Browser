@@ -3,6 +3,7 @@
 import {loadOpenJocWasm, WasmDecoderClient, type WasmDecoderStatus} from './wasm-bindings.js';
 import {isCurrentGeneration} from './generation.js';
 import {DecoderGenerationSlot} from './decoder-generation.js';
+import {shouldWaitForCmafAudioBudget} from './decode-backpressure.js';
 import {MAX_INPUT_FILE_BYTES, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
 
 const workerScope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
@@ -93,7 +94,11 @@ async function postAvailablePcm(currentGeneration: number): Promise<void> {
     if (!(await waitForPcmAcceptance(sequence, currentGeneration))) {
       return;
     }
-    await waitForPlaybackBudget();
+    if (decoderMode === 'cmaf-calibrated' || decoderMode === 'cmaf-unity') {
+      await waitForCmafPlaybackBudget();
+    } else {
+      await waitForPlaybackBudget();
+    }
   }
   postDecoderStatus();
 }
@@ -209,12 +214,18 @@ async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: '
   return true;
 }
 
+async function waitForCmafPlaybackBudget(): Promise<void> {
+  while (shouldWaitForCmafAudioBudget(queuedAudioMs, MAX_DECODE_QUEUE_MS)) {
+    await waitForWake();
+  }
+}
+
 async function handleCmafSample(command: Extract<WorkerCommand, {type: 'decode-cmaf-sample'}>): Promise<void> {
   if (command.generation < generation) return;
   generation = Math.max(generation, command.generation);
   const currentGeneration = command.generation;
   if (!(await ensureCmafDecoder(currentGeneration, command.dialnorm))) return;
-  await waitForPlaybackBudget();
+  await waitForCmafPlaybackBudget();
   if (!isCurrentGeneration(currentGeneration, generation)) return;
   const status = requireDecoder().pushPacket(new Uint8Array(command.bytes), {
     ptsSamples: command.ptsSamples,
@@ -232,7 +243,7 @@ async function handleCmafEnd(command: Extract<WorkerCommand, {type: 'end-cmaf'}>
   if (command.generation !== generation || (decoderMode !== 'cmaf-calibrated' && decoderMode !== 'cmaf-unity')) return;
   const currentGeneration = command.generation;
   while (isCurrentGeneration(currentGeneration, generation)) {
-    await waitForPlaybackBudget();
+    await waitForCmafPlaybackBudget();
     if (!isCurrentGeneration(currentGeneration, generation)) return;
     const status = requireDecoder().flush();
     throwIfError(status);

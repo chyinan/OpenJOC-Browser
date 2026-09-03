@@ -36,7 +36,7 @@ Browser code parses only BMFF transport structures: init `moov`/`mdhd`/`hdlr`/`s
 
 ## Synchronization and failure behavior
 
-The content controller reports `requestVideoFrameCallback().mediaTime` where available and falls back to `video.currentTime`. The offscreen document reports `AudioContext.getOutputTimestamp()`, `baseLatency`, and `outputLatency` for diagnostics. AudioWorklet consumes timestamped PCM only when the queue is aligned to the latest video media sample; future audio waits and stale audio is trimmed. Pause/buffering suspends audio and decoding; seek/media changes increment generation and restart from the target sidx range.
+The content controller reports `requestVideoFrameCallback().mediaTime` where available and falls back to `video.currentTime`. The offscreen document reports `AudioContext.getOutputTimestamp()`, `baseLatency`, and `outputLatency` for diagnostics. AudioWorklet consumes timestamped PCM only when the queue is aligned to the latest video media sample; future audio waits and stale audio is trimmed. Pause/buffering suspends audible output; CMAF preparation may continue only up to the bounded PCM queue limit so startup cannot deadlock. Seek/media changes increment generation and restart from the target sidx range.
 
 Native Bilibili audio is muted only after OpenJOC has reported a non-empty in-band profile and the PCM path is ready. Disable, malformed media, fetch failure, unsupported format/rate, and extension errors clear the OpenJOC queue and restore the prior `muted`, `volume`, and `defaultMuted` state. The page-context fallback is fail-closed on CORS, non-206, mismatched Content-Range, stale generation, or over-bound response.
 
