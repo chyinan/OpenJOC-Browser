@@ -151,9 +151,9 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number): Pro
     case 'page-media-range-response': {
       const session = sessions.get(tabId);
       const pending = pendingPageRanges.get(message.requestId);
-      if (session === undefined || pending === undefined || pending.tabId !== tabId || pending.generation !== message.generation || message.generation !== session.generation || message.buffer.byteLength > pending.end - pending.start + 1) return;
+      if (session === undefined || pending === undefined || pending.tabId !== tabId || pending.generation !== message.generation || message.generation !== session.generation || base64ByteLength(message.bufferBase64) > pending.end - pending.start + 1) return;
       pendingPageRanges.delete(message.requestId);
-      await sendToOffscreen({target: 'offscreen', type: 'page-media-range-response', tabId, generation: message.generation, requestId: message.requestId, status: message.status, contentRange: message.contentRange, error: message.error, buffer: message.buffer});
+      await sendToOffscreen({target: 'offscreen', type: 'page-media-range-response', tabId, generation: message.generation, requestId: message.requestId, status: message.status, contentRange: message.contentRange, error: message.error, bufferBase64: message.bufferBase64});
       return;
     }
     case 'dialnorm': {
@@ -190,6 +190,11 @@ function candidateUrls(candidate: BilibiliAudioCandidate): ReadonlyArray<string>
 
 function mediaKeyEquals(left: MediaKey, right: MediaKey): boolean {
   return left.bvid === right.bvid && left.aid === right.aid && left.cid === right.cid;
+}
+
+function base64ByteLength(value: string): number {
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
 }
 
 chrome.action.onClicked.addListener((tab: ChromeTab): void => {

@@ -36,6 +36,8 @@ Browser code parses only BMFF transport structures: init `moov`/`mdhd`/`hdlr`/`s
 
 Each offscreen session creates the decoder worker before resetting and feeding CMAF samples; a missing decoder worker cannot silently consume the video clock without decoding. Preparation has bounded progress checks and reports an error when no PCM/JOC profile becomes available. The content controller sends a throttled, signed-URL-free session heartbeat so a restarted MV3 service worker can ask the page to re-register its in-memory manifest session.
 
+The manifest bridge prefers the current page's embedded `__playinfo__` when it already contains the entitled Dolby/E-AC-3 candidate, with the exact `playurl` resource as a fallback. Page-context media ranges omit cookies because the signed media URL is sufficient and the CDN does not advertise credentialed CORS. Range responses cross the extension runtime as bounded Base64 and are restored to `ArrayBuffer` only inside offscreen parsing.
+
 ## Synchronization and failure behavior
 
 The content controller reports `requestVideoFrameCallback().mediaTime` where available and falls back to `video.currentTime`. The offscreen document reports `AudioContext.getOutputTimestamp()`, `baseLatency`, and `outputLatency` for diagnostics. AudioWorklet consumes timestamped PCM only when the queue is aligned to the latest video media sample; future audio waits and stale audio is trimmed. Pause/buffering suspends audible output; CMAF preparation may continue only up to the bounded PCM queue limit so startup cannot deadlock. Seek/media changes increment generation and restart from the target sidx range.

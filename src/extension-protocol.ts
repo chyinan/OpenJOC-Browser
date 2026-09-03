@@ -54,7 +54,7 @@ export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'request-session'}>
   | Readonly<{target: 'background'; type: 'request-manifest'; pageUrl: string}>
   | Readonly<{target: 'background'; type: 'page-media-range-request'; tabId: number; generation: number; requestId: string; url: string; start: number; end: number}>
-  | Readonly<{target: 'background'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; buffer: ArrayBuffer}>
+  | Readonly<{target: 'background'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; bufferBase64: string}>
   | Readonly<{target: 'background'; type: 'start'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'}>
   | Readonly<{target: 'background'; type: 'manifest'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>}>
   | Readonly<{target: 'background'; type: 'session-heartbeat'; pageUrl: string; mediaKey: MediaKey; generation: number}>
@@ -67,7 +67,7 @@ export type RuntimeMessage =
   | Readonly<{target: 'offscreen'; type: 'native-muted'; tabId: number; generation: number}>
   | Readonly<{target: 'offscreen'; type: 'disable'; tabId: number; generation: number}>
   | Readonly<{target: 'offscreen'; type: 'dialnorm'; tabId: number; generation: number; mode: 'calibrated' | 'unity'}>
-  | Readonly<{target: 'offscreen'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; buffer: ArrayBuffer}>
+  | Readonly<{target: 'offscreen'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; bufferBase64: string}>
   | Readonly<{target: 'background'; type: 'offscreen-status'; tabId: number; generation: number; phase: PlaybackPhase; reason: string | null; inbandJocConfirmed: boolean; profile: string | null; metrics: PlaybackMetrics}>;
 
 /** Validates untrusted MAIN-world data before it reaches extension code. */
@@ -96,7 +96,7 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (value.target === 'background' && value.type === 'page-media-range-response') {
     return isTabId(value.tabId) && isGeneration(value.generation) && isNonEmptyString(value.requestId)
       && isNonNegativeFinite(value.status) && Number.isSafeInteger(value.status)
-      && isNullableString(value.contentRange) && isNullableString(value.error) && isArrayBuffer(value.buffer);
+      && isNullableString(value.contentRange) && isNullableString(value.error) && isBase64String(value.bufferBase64);
   }
   if (value.target === 'background' && value.type === 'start') {
     return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates)
@@ -141,7 +141,7 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (value.target === 'offscreen' && value.type === 'page-media-range-response') {
     return isTabId(value.tabId) && isGeneration(value.generation) && isNonEmptyString(value.requestId)
       && isNonNegativeFinite(value.status) && Number.isSafeInteger(value.status)
-      && isNullableString(value.contentRange) && isNullableString(value.error) && isArrayBuffer(value.buffer);
+      && isNullableString(value.contentRange) && isNullableString(value.error) && isBase64String(value.bufferBase64);
   }
   if (value.target === 'background' && value.type === 'offscreen-status') {
       return isTabId(value.tabId) && isGeneration(value.generation) && isPlaybackPhase(value.phase)
@@ -208,8 +208,8 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-function isArrayBuffer(value: unknown): value is ArrayBuffer {
-  return value instanceof ArrayBuffer;
+function isBase64String(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 5_592_408 && value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(value);
 }
 
 function isNullableString(value: unknown): value is string | null {

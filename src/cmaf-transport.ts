@@ -43,6 +43,7 @@ type IsoBox = Readonly<{
 const MAX_BOX_BYTES = 32 * 1024 * 1024;
 const MAX_SAMPLE_COUNT = 512;
 const MAX_SEGMENT_REFERENCES = 4_096;
+const CONTAINER_BOX_TYPES = new Set(['edts', 'dinf', 'ilst', 'mdia', 'meta', 'minf', 'moof', 'moov', 'mvex', 'mfra', 'schi', 'sinf', 'stbl', 'trak', 'traf', 'udta', 'wave']);
 
 /** Parses the selected audio track from an ISO-BMFF initialization segment. */
 export function parseCmafInitSegment(bytes: Readonly<Uint8Array>): CmafInitInfo {
@@ -354,8 +355,10 @@ function findChild(bytes: Readonly<Uint8Array>, parent: IsoBox, type: string): I
 function findDescendant(bytes: Readonly<Uint8Array>, parent: IsoBox, type: string): IsoBox | null {
   for (const child of parseBoxes(bytes, parent.payloadStart, parent.end)) {
     if (child.type === type) return child;
-    const nested = findDescendant(bytes, child, type);
-    if (nested !== null) return nested;
+    if (CONTAINER_BOX_TYPES.has(child.type)) {
+      const nested = findDescendant(bytes, child, type);
+      if (nested !== null) return nested;
+    }
   }
   return null;
 }
@@ -368,8 +371,10 @@ function findDescendantInRange(
 ): IsoBox | null {
   for (const child of parseBoxes(bytes, start, end)) {
     if (child.type === type) return child;
-    const nested = findDescendant(bytes, child, type);
-    if (nested !== null) return nested;
+    if (CONTAINER_BOX_TYPES.has(child.type)) {
+      const nested = findDescendant(bytes, child, type);
+      if (nested !== null) return nested;
+    }
   }
   return null;
 }

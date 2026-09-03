@@ -82,6 +82,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function base64ToArrayBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
+
 function isWorkletStats(value: unknown): value is WorkletStats & {readonly type: 'stats'; readonly generation: number} {
   return isRecord(value) && value.type === 'stats' && typeof value.generation === 'number' && typeof value.queuedAudioMs === 'number' && typeof value.underrunCount === 'number' && typeof value.acceptedSequence === 'number' && (value.currentAudioMediaSamples === null || typeof value.currentAudioMediaSamples === 'number') && (value.driftMs === null || typeof value.driftMs === 'number') && typeof value.resyncCount === 'number';
 }
@@ -151,6 +158,7 @@ async function ensureAudio(): Promise<AudioContext> {
     nextNode.port.onmessage = (event: MessageEvent<unknown>): void => {
       if (isWorkletStats(event.data) && currentSession !== null && event.data.generation === currentSession.request.generation) {
         latestWorkletStats = event.data;
+        worker?.postMessage({type: 'queue-stats', generation: event.data.generation, queuedAudioMs: event.data.queuedAudioMs, acceptedSequence: event.data.acceptedSequence} satisfies WorkerCommand);
         if (event.data.driftMs !== null) driftMetrics = recordDriftSample(driftMetrics, event.data.driftMs);
         sendStatus(currentSession.phase, null, currentSession);
       } else if (isRecord(event.data) && event.data.type === 'error' && typeof event.data.message === 'string') {
@@ -511,7 +519,11 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown): void => {
         pending.reject(new Error('page-context media response generation is stale'));
         return;
       }
-      pending.resolve({status: rawMessage.status, contentRange: rawMessage.contentRange, error: rawMessage.error, buffer: rawMessage.buffer});
+      try {
+        pending.resolve({status: rawMessage.status, contentRange: rawMessage.contentRange, error: rawMessage.error, buffer: base64ToArrayBuffer(rawMessage.bufferBase64)});
+      } catch {
+        pending.reject(new Error('page-context media response contains invalid base64 data'));
+      }
       return;
     }
   }

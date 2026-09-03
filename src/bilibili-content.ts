@@ -125,6 +125,15 @@ function send(message: unknown): void {
   void chrome.runtime.sendMessage(message).catch(() => undefined);
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
 function mediaKeyString(key: ContentMediaKey): string {
   return `${key.bvid}:${key.aid}:${key.cid}`;
 }
@@ -301,7 +310,7 @@ window.addEventListener('message', (event: MessageEvent<unknown>): void => {
     const pending = pendingPageRangeRequests.get(event.data.requestId);
     if (pending === undefined || pending.generation !== videoGeneration) return;
     pendingPageRangeRequests.delete(event.data.requestId);
-    send({target: 'background', type: 'page-media-range-response', tabId: pending.tabId, generation: pending.generation, requestId: pending.requestId, status: event.data.status, contentRange: event.data.contentRange, error: event.data.error, buffer: event.data.buffer});
+    send({target: 'background', type: 'page-media-range-response', tabId: pending.tabId, generation: pending.generation, requestId: pending.requestId, status: event.data.status, contentRange: event.data.contentRange, error: event.data.error, bufferBase64: arrayBufferToBase64(event.data.buffer)});
     return;
   }
   if (isUnavailableMessage(event.data)) {

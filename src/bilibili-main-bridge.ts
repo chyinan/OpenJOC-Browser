@@ -176,14 +176,16 @@ async function fetchManifest(url: string): Promise<void> {
   try {
     const response = await fetch(url, {credentials: 'include'});
     if (!response.ok) {
+      if (rememberAndEmitManifest(pagePlayinfo())) return;
       emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: `playback manifest returned status ${response.status}`});
       return;
     }
-    if (!rememberAndEmitManifest(await response.json())) {
+    if (!rememberAndEmitManifest(await response.json()) && !rememberAndEmitManifest(pagePlayinfo())) {
       emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: 'JOC stream unavailable for the current Bilibili session'});
       return;
     }
   } catch {
+    if (rememberAndEmitManifest(pagePlayinfo())) return;
     emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: 'failed to read the current Bilibili playback manifest'});
   } finally {
     manifestRequestInFlight = false;
@@ -191,6 +193,13 @@ async function fetchManifest(url: string): Promise<void> {
 }
 
 function scan(force = false): void {
+  const payload = pagePlayinfo();
+  const candidates = candidatesFromPayload(payload);
+  if (candidates.length > 0) {
+    const fingerprint = candidates.map((candidate) => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|');
+    if (force || fingerprint !== lastPageManifestFingerprint) rememberAndEmitManifest(payload);
+    return;
+  }
   const next = manifestUrl();
   if (next !== null && (force || next !== lastManifestUrl)) {
     lastManifestUrl = next;
@@ -198,12 +207,6 @@ function scan(force = false): void {
     return;
   }
   if (manifestRequestInFlight) return;
-  const payload = pagePlayinfo();
-  const candidates = candidatesFromPayload(payload);
-  if (candidates.length === 0) return;
-  const fingerprint = candidates.map((candidate) => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|');
-  if (!force && fingerprint === lastPageManifestFingerprint) return;
-  rememberAndEmitManifest(payload);
 }
 
 window.addEventListener('message', (event: MessageEvent<unknown>): void => {
@@ -219,7 +222,7 @@ window.addEventListener('message', (event: MessageEvent<unknown>): void => {
   const end = event.data.end as number;
   void (async (): Promise<void> => {
     try {
-      const response = await fetch(url, {credentials: 'include', headers: {Range: `bytes=${start}-${end}`}, referrer: location.href, referrerPolicy: 'no-referrer-when-downgrade'});
+      const response = await fetch(url, {credentials: 'omit', headers: {Range: `bytes=${start}-${end}`}, referrer: location.href, referrerPolicy: 'no-referrer-when-downgrade'});
       const contentRange = response.headers.get('content-range');
       const buffer = response.status === 206 ? await response.arrayBuffer() : new ArrayBuffer(0);
       const message = {source: BRIDGE_SOURCE, type: 'media-range-response', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, requestId, status: response.status, contentRange, error: null, buffer};

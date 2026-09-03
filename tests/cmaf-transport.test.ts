@@ -40,7 +40,7 @@ function u64(value: number): Array<number> {
 function makeInit(): Uint8Array {
   const mdhd = fullBox('mdhd', 0x0100_0000, [...u64(0), ...u64(0), ...u32(48_000), ...u64(0), 0, 0]);
   const hdlr = fullBox('hdlr', 0, [0, 0, 0, 0, ...Array.from('soun', (character) => character.charCodeAt(0)), ...Array<number>(12).fill(0)]);
-  const dec3 = box('dec3', [0, 0, 0, 0, 0, 0, 0, 0]);
+  const dec3 = box('dec3', [0x20, 0x00, 0x20, 0x0f, 0x00, 0x01, 0x10]);
   const stsd = fullBox('stsd', 0, [0, 0, 0, 1, ...box('ec-3', [...Array<number>(28).fill(0), ...dec3])]);
   const stbl = box('stbl', stsd);
   const minf = box('minf', stbl);
