@@ -155,7 +155,7 @@ function readOutputClock(): OutputClock {
 
 async function ensureAudio(): Promise<AudioContext> {
   if (audioContext !== null && audioNode !== null) return audioContext;
-  const nextContext = new AudioContext({sampleRate: SAMPLE_RATE});
+  const nextContext = new AudioContext({sampleRate: SAMPLE_RATE, latencyHint: 'playback'});
   try {
     if (nextContext.sampleRate !== SAMPLE_RATE) throw new Error(`AudioContext negotiated ${nextContext.sampleRate} Hz, expected 48000 Hz`);
     await nextContext.audioWorklet.addModule(new URL('./pcm-processor.js', import.meta.url));
@@ -321,6 +321,7 @@ function pumpFromEstimatedVideoClock(): void {
   const session = currentSession;
   const currentVideo = latestVideoMediaSamples;
   if (session === null || currentVideo === null || session.isPaused || session.isBuffering) return;
+  if (session.isNativeMuted && audioContext !== null && audioContext.state !== 'running') void audioContext.resume();
   const elapsedMs = performance.now() - lastVideoClockAtMs;
   const estimatedVideo = estimateMediaTimeSamples(currentVideo, elapsedMs, lastVideoPlaybackRate);
   if (elapsedMs >= VIDEO_CLOCK_STALE_AFTER_MS) {

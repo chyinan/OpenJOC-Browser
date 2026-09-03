@@ -48,6 +48,8 @@ When a background/minimized page temporarily stops delivering video clock callba
 
 The CMAF path keeps a 3-second PCM cushion and begins the next bounded fragment window with 4 seconds of compressed-media lead to absorb background scheduling and network jitter. The local raw-file path retains its original 1-second decode budget.
 
+The offscreen `AudioContext` requests the `playback` latency profile and is periodically resumed if an active, non-paused session observes a non-running context, reducing sensitivity to background-window audio scheduling.
+
 ## Tests and gates
 
 - `npm test` covers transport, URL/message validation, bounded window selection, timestamped queue, sync state, manifest candidate filtering, and the deterministic mock harness.
