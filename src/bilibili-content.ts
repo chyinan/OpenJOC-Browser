@@ -232,6 +232,7 @@ function updateDetails(): void {
   const metrics = latestStatus?.metrics;
   details.textContent = JSON.stringify({
     phase: latestStatus?.phase ?? 'disabled',
+    stage: metrics?.stage ?? null,
     inbandJocConfirmed: latestStatus?.inbandJocConfirmed ?? false,
     profile: latestStatus?.profile ?? null,
     currentVideoMediaTime: metrics?.currentVideoMediaTime ?? null,

@@ -14,6 +14,8 @@ const PUMP_THRESHOLD_SAMPLES = SAMPLE_RATE * 2;
 const PREPARATION_TIMEOUT_MS = 15_000;
 const DECODER_PROGRESS_TIMEOUT_MS = 10_000;
 
+type SessionStage = 'starting-audio' | 'starting-decoder' | 'fetching-index' | 'fetching-segment' | 'decoding' | 'waiting-for-joc-profile' | 'streaming';
+
 type WorkletStats = Readonly<{
   readonly queuedAudioMs: number;
   readonly underrunCount: number;
@@ -42,6 +44,7 @@ type Session = {
   isPaused: boolean;
   isBuffering: boolean;
   phase: 'preparing' | 'ready' | 'active' | 'paused' | 'buffering';
+  stage: SessionStage;
   preparationTimer: number | null;
 };
 
@@ -98,6 +101,7 @@ function sendStatus(
   const currentVideo = latestVideoMediaSamples ?? session.request.videoTimeSamples;
   const currentAudio = latestWorkletStats.currentAudioMediaSamples;
   const metrics: PlaybackMetrics = {
+    stage: session.stage,
     currentVideoMediaTime: currentVideo / SAMPLE_RATE,
     currentAudioMediaTime: currentAudio === null ? null : currentAudio / SAMPLE_RATE,
     driftMs: latestWorkletStats.driftMs,
@@ -238,6 +242,7 @@ function handleWorkerMessage(message: WorkerMessage): void {
     resolveDecoderProgress(message.status);
     if (message.status.profile !== null && message.status.profile.length > 0) {
       session.isJocConfirmed = true;
+      session.stage = 'streaming';
       if (session.preparationTimer !== null) {
         window.clearTimeout(session.preparationTimer);
         session.preparationTimer = null;
@@ -270,10 +275,12 @@ async function pumpSegments(session: Session): Promise<void> {
     let firstSample = (latestDecoderStatus?.decodedAccessUnits ?? 0) === 0;
     for (const reference of references) {
       if (!isCurrentSession(session)) return;
+      session.stage = 'fetching-segment';
       const samples = await fetchSegmentWithPageFallback(session.index, reference, session.abort.signal, session.request.tabId, session.request.generation);
       let accessUnits = latestDecoderStatus?.decodedAccessUnits ?? 0;
       for (const sample of samples) {
         if (!isCurrentSession(session)) return;
+        session.stage = 'decoding';
         const buffer = sample.bytes.slice().buffer;
         decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.request.generation, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm} satisfies WorkerCommand, [buffer]);
         firstSample = false;
@@ -283,6 +290,7 @@ async function pumpSegments(session: Session): Promise<void> {
       session.nextReferenceIndex += 1;
       session.windowEndSamples = Math.max(session.windowEndSamples, reference.ptsSamples + reference.durationSamples);
     }
+    session.stage = 'waiting-for-joc-profile';
     if ((latestDecoderStatus?.decodedAccessUnits ?? 0) === 0) {
       throw new Error('OpenJOC did not decode any CMAF audio access units');
     }
@@ -375,18 +383,20 @@ function validatePageRangeResponse(response: PageRangeResponse, start: number, e
 
 async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>): Promise<void> {
   await stopSession(false);
-  const session: Session = {request, abort: new AbortController(), index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: false, isBuffering: false, phase: 'preparing', preparationTimer: null};
+  const session: Session = {request, abort: new AbortController(), index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: false, isBuffering: false, phase: 'preparing', stage: 'starting-audio', preparationTimer: null};
   currentSession = session;
   session.preparationTimer = window.setTimeout((): void => {
-    if (isCurrentSession(session) && !session.isJocConfirmed) void failSession('OpenJOC preparation timed out before JOC PCM became available');
+    if (isCurrentSession(session) && !session.isJocConfirmed) void failSession(`OpenJOC ${session.stage} timed out before JOC PCM became available`);
   }, PREPARATION_TIMEOUT_MS);
   latestVideoMediaSamples = request.videoTimeSamples;
   const context = await ensureAudio();
+  session.stage = 'starting-decoder';
   ensureWorker();
   resetAudio(request.generation);
   await context.resume();
   sendStatus('preparing', null, session);
   try {
+    session.stage = 'fetching-index';
     session.index = await fetchIndexWithFallback(request, session.abort.signal);
     if (!isCurrentSession(session)) return;
     const references = selectCmafSegmentWindow(session.index.index, request.videoTimeSamples, MAX_SEGMENTS_PER_WINDOW);

@@ -23,6 +23,7 @@ export type MainBridgeMessage =
 export type PlaybackPhase = 'disabled' | 'preparing' | 'ready' | 'active' | 'paused' | 'buffering' | 'error';
 
 export type PlaybackMetrics = Readonly<{
+  readonly stage: string;
   readonly currentVideoMediaTime: number | null;
   readonly currentAudioMediaTime: number | null;
   readonly driftMs: number | null;
@@ -168,7 +169,8 @@ function isCandidate(value: unknown): value is BilibiliAudioCandidate {
 
 function isPlaybackMetrics(value: unknown): value is PlaybackMetrics {
   if (!isRecord(value)) return false;
-  return isNullableFiniteNumber(value.currentVideoMediaTime)
+  return isNonEmptyString(value.stage)
+    && isNullableFiniteNumber(value.currentVideoMediaTime)
     && isNullableFiniteNumber(value.currentAudioMediaTime)
     && isNullableFiniteNumber(value.driftMs)
     && isNullableFiniteNumber(value.driftP50Ms)

@@ -199,7 +199,7 @@ window.addEventListener('message', (event: MessageEvent<unknown>): void => {
   const end = event.data.end as number;
   void (async (): Promise<void> => {
     try {
-      const response = await fetch(url, {credentials: 'include', headers: {Range: `bytes=${start}-${end}`}, referrerPolicy: 'no-referrer-when-downgrade'});
+      const response = await fetch(url, {credentials: 'include', headers: {Range: `bytes=${start}-${end}`}, referrer: location.href, referrerPolicy: 'no-referrer-when-downgrade'});
       const contentRange = response.headers.get('content-range');
       const buffer = response.status === 206 ? await response.arrayBuffer() : new ArrayBuffer(0);
       const message = {source: BRIDGE_SOURCE, type: 'media-range-response', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, requestId, status: response.status, contentRange, error: null, buffer};
