@@ -86,7 +86,7 @@ async function fetchRange(
     credentials: 'include',
     headers: {Range: `bytes=${start}-${end}`},
     referrer: options.pageUrl,
-    referrerPolicy: 'strict-origin-when-cross-origin',
+    referrerPolicy: 'no-referrer-when-downgrade',
     signal,
   });
   if (response.status !== 206) {

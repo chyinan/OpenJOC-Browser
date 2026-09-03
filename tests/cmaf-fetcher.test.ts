@@ -8,9 +8,11 @@ function assert(condition: boolean, message: string): void {
 
 async function run(): Promise<void> {
   const ranges: Array<string> = [];
+  const policies: Array<ReferrerPolicy | null> = [];
   const fakeFetch = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
     ranges.push(headers.get('Range') ?? '');
+    policies.push(init?.referrerPolicy ?? null);
     return new Response('', {status: 403});
   };
   let message = '';
@@ -26,6 +28,7 @@ async function run(): Promise<void> {
   }
   assert(message === 'Bilibili CMAF range request returned status 403 for bytes 0-8191', '403 is preserved at the range boundary');
   assert(ranges[0] === 'bytes=0-8191', 'initial range matches the observed bounded request');
+  assert(policies[0] === 'no-referrer-when-downgrade', 'media request preserves the observed full-page referrer policy');
 }
 
 await run();

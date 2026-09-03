@@ -1,6 +1,6 @@
 # Progress: Bilibili JOC CMAF Playback and Video-Master A/V Sync
 
-> Created: 2026-09-03 | Status: awaiting human live-site smoke
+> Created: 2026-09-03 | Status: debugging live-site CMAF 403
 
 ## Goal
 
@@ -50,3 +50,4 @@ Perform the human smoke on an entitled standard Bilibili Dolby/JOC VOD: enable, 
 - Automated gates: `npm run check`, `npm test`, `npm run check:wasm`, `npm run parity`, `npm run cmaf-parity`, Edge CDP Phase 0 normal/malformed QA, Rust fmt/check/clippy/full test all passed. Rust full test: 927 passed, 10 ignored.
 - Commits: Browser `5ef3797` plus UI status `f2785cf`; OpenJOC `7061215`.
 - Review status: manual security/media review completed; two delegated code-review attempts timed out and were stopped, so no delegated zero-issue result is claimed.
+- Live smoke follow-up: user reproduced `403 for bytes 0-8191` after the initial-range fix; the next isolated change preserves the full Bilibili page Referer policy observed in native CDP requests.
