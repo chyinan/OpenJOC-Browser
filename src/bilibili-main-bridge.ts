@@ -22,6 +22,7 @@ const PAGE_ORIGIN = 'https://www.bilibili.com';
 const API_ORIGIN = 'https://api.bilibili.com';
 const BRIDGE_SOURCE = 'openjoc-bilibili';
 let lastManifestUrl: string | null = null;
+let lastPageManifestFingerprint: string | null = null;
 let manifestRequestInFlight = false;
 const knownMediaUrls = new Set<string>();
 
@@ -57,13 +58,18 @@ function arrayValue(value: unknown): ReadonlyArray<unknown> {
 }
 
 function pageState(): MainBridgePageState | null {
-  const pageWindow = window as Window & {readonly __INITIAL_STATE__?: unknown};
+  const pageWindow = window as Window & {readonly __INITIAL_STATE__?: unknown; readonly __playinfo__?: unknown};
   const root = record(pageWindow.__INITIAL_STATE__);
   const videoData = record(property(root, 'videoData'));
   const bvid = stringValue(property(videoData, 'bvid'), property(root, 'bvid'));
   const aid = identifierValue(property(videoData, 'aid'), property(root, 'aid'));
   const cid = identifierValue(property(videoData, 'cid'), property(root, 'cid'));
   return bvid !== null && aid !== null && cid !== null ? {bvid, aid, cid} : null;
+}
+
+function pagePlayinfo(): unknown {
+  const pageWindow = window as Window & {readonly __playinfo__?: unknown};
+  return pageWindow.__playinfo__;
 }
 
 function manifestUrl(): string | null {
@@ -95,6 +101,19 @@ function candidatesFromPayload(payload: unknown): ReadonlyArray<MainBridgeCandid
   collect(arrayValue(property(dash, 'audio')), 'ec-3', result, seen);
   collect(arrayValue(property(record(property(data, 'dolby')), 'audio')), 'dolby', result, seen);
   return result;
+}
+
+function rememberAndEmitManifest(payload: unknown): boolean {
+  const candidates = candidatesFromPayload(payload);
+  const identity = pageState();
+  if (identity === null || candidates.length === 0) return false;
+  candidates.forEach((candidate) => {
+    knownMediaUrls.add(candidate.baseUrl);
+    candidate.backupUrls.forEach((url) => knownMediaUrls.add(url));
+  });
+  lastPageManifestFingerprint = candidates.map((candidate) => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|');
+  emit({source: BRIDGE_SOURCE, type: 'manifest', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, mediaKey: identity, candidates});
+  return true;
 }
 
 function collect(
@@ -160,18 +179,10 @@ async function fetchManifest(url: string): Promise<void> {
       emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: `playback manifest returned status ${response.status}`});
       return;
     }
-    const candidates = candidatesFromPayload(await response.json());
-    const identity = pageState();
-    if (identity === null) return;
-    if (candidates.length === 0) {
+    if (!rememberAndEmitManifest(await response.json())) {
       emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: 'JOC stream unavailable for the current Bilibili session'});
       return;
     }
-    candidates.forEach((candidate) => {
-      knownMediaUrls.add(candidate.baseUrl);
-      candidate.backupUrls.forEach((url) => knownMediaUrls.add(url));
-    });
-    emit({source: BRIDGE_SOURCE, type: 'manifest', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, mediaKey: identity, candidates});
   } catch {
     emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: 'failed to read the current Bilibili playback manifest'});
   } finally {
@@ -181,9 +192,18 @@ async function fetchManifest(url: string): Promise<void> {
 
 function scan(force = false): void {
   const next = manifestUrl();
-  if (next === null || (!force && next === lastManifestUrl)) return;
-  lastManifestUrl = next;
-  void fetchManifest(next);
+  if (next !== null && (force || next !== lastManifestUrl)) {
+    lastManifestUrl = next;
+    void fetchManifest(next);
+    return;
+  }
+  if (manifestRequestInFlight) return;
+  const payload = pagePlayinfo();
+  const candidates = candidatesFromPayload(payload);
+  if (candidates.length === 0) return;
+  const fingerprint = candidates.map((candidate) => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|');
+  if (!force && fingerprint === lastPageManifestFingerprint) return;
+  rememberAndEmitManifest(payload);
 }
 
 window.addEventListener('message', (event: MessageEvent<unknown>): void => {
