@@ -256,7 +256,7 @@ async function fetchIndexWithFallback(
   let lastError: Error | null = null;
   for (const url of urls) {
     try {
-      return await fetchCmafIndex({url, pageUrl: request.pageUrl}, signal);
+      return await fetchCmafIndex({url, pageUrl: request.pageUrl, signal});
     } catch (error: unknown) {
       if (signal.aborted) throw error;
       lastError = error instanceof Error ? error : new Error('failed to fetch Bilibili CMAF initialization');

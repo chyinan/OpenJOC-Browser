@@ -4,12 +4,17 @@ import {parseCmafFragment, parseCmafInitSegment, parseCmafSegmentIndex, type Cma
 import {isAllowedBilibiliMediaUrl, sanitizeMediaUrl} from './media-url-policy.js';
 
 const CMAF_TIMESCALE = 48_000;
-const INIT_RANGE_END = 1_048_575;
+const INIT_RANGE_END = 8_191;
 const MAX_RANGE_BYTES = 4 * 1024 * 1024;
 
 export type CmafFetchOptions = Readonly<{
   readonly url: string;
   readonly pageUrl: string;
+}>;
+
+type CmafRangeOptions = CmafFetchOptions & Readonly<{
+  readonly signal: AbortSignal;
+  readonly fetchImpl?: typeof fetch;
 }>;
 
 export type CmafIndexSession = Readonly<{
@@ -26,11 +31,11 @@ type RangeResponse = Readonly<{
 }>;
 
 /** Fetches only the bounded initialization/index range for a Bilibili CMAF source. */
-export async function fetchCmafIndex(options: CmafFetchOptions, signal: AbortSignal): Promise<CmafIndexSession> {
+export async function fetchCmafIndex(options: CmafRangeOptions): Promise<CmafIndexSession> {
   if (!isAllowedBilibiliMediaUrl(options.url, options.pageUrl)) {
     throw new Error(`rejected Bilibili media URL: ${sanitizeMediaUrl(options.url)}`);
   }
-  const response = await fetchRange(options, 0, INIT_RANGE_END, signal);
+  const response = await fetchRange(options, 0, INIT_RANGE_END, options.signal);
   const init = parseCmafInitSegment(response.bytes);
   const index = parseCmafSegmentIndex(response.bytes);
   if (init.isEncrypted) {
@@ -59,7 +64,7 @@ export async function fetchCmafSegment(
   if (reference.byteRangeStart < 0 || reference.byteRangeEnd < reference.byteRangeStart || reference.byteRangeEnd >= session.totalBytes) {
     throw new Error('Bilibili CMAF segment range is invalid');
   }
-  const range = await fetchRange({url: session.url, pageUrl: session.pageUrl}, reference.byteRangeStart, reference.byteRangeEnd, signal);
+  const range = await fetchRange({url: session.url, pageUrl: session.pageUrl, signal}, reference.byteRangeStart, reference.byteRangeEnd, signal);
   if (range.bytes.length > MAX_RANGE_BYTES) {
     throw new Error('Bilibili CMAF segment exceeds the bounded range limit');
   }
@@ -67,7 +72,7 @@ export async function fetchCmafSegment(
 }
 
 async function fetchRange(
-  options: CmafFetchOptions,
+  options: CmafRangeOptions,
   start: number,
   end: number,
   signal: AbortSignal,
@@ -75,7 +80,8 @@ async function fetchRange(
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end - start + 1 > MAX_RANGE_BYTES) {
     throw new Error('CMAF byte range is outside the bounded fetch limit');
   }
-  const response = await fetch(options.url, {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl(options.url, {
     method: 'GET',
     credentials: 'include',
     headers: {Range: `bytes=${start}-${end}`},
@@ -84,7 +90,7 @@ async function fetchRange(
     signal,
   });
   if (response.status !== 206) {
-    throw new Error(`Bilibili CMAF range request returned status ${response.status}`);
+    throw new Error(`Bilibili CMAF range request returned status ${response.status} for bytes ${start}-${end}`);
   }
   const contentRange = parseContentRange(response.headers.get('content-range'));
   if (contentRange === null || contentRange.start !== start || contentRange.end < start || contentRange.end > end) {

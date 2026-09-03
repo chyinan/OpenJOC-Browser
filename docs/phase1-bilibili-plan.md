@@ -32,7 +32,7 @@ Bilibili MAIN bridge
 
 The MAIN bridge does not patch global fetch/XHR, MediaSource, SourceBuffer, `canPlayType`, or codec support. It observes the exact current `playurl` resource from `performance` and performs one targeted page-context read with the current session. The extension never exposes a generic page-requested fetch oracle.
 
-Browser code parses only BMFF transport structures: init `moov`/`mdhd`/`hdlr`/`stsd`, `sidx`, and fragment `moof`/`traf`/`tfhd`/`tfdt`/`trun`/`mdat`. E-AC-3/JOC/EMDF/OAMD semantics remain in OpenJOC Rust/WASM. `fetchCmafIndex()` is bounded to a 1 MiB initialization range and each media request is bounded to 4 MiB; playback keeps at most two indexed fragments in its active window.
+Browser code parses only BMFF transport structures: init `moov`/`mdhd`/`hdlr`/`stsd`, `sidx`, and fragment `moof`/`traf`/`tfhd`/`tfdt`/`trun`/`mdat`. E-AC-3/JOC/EMDF/OAMD semantics remain in OpenJOC Rust/WASM. `fetchCmafIndex()` starts with the observed small 8 KiB initialization range and each media request is bounded to 4 MiB; playback keeps at most two indexed fragments in its active window.
 
 ## Synchronization and failure behavior
 
