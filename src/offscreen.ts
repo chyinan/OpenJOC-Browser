@@ -6,6 +6,7 @@ import {selectCmafSegmentWindow} from './cmaf-window.js';
 import {isRuntimeMessage, type PlaybackMetrics, type RuntimeMessage} from './extension-protocol.js';
 import {sanitizeMediaUrl} from './media-url-policy.js';
 import {createDriftMetrics, recordDriftSample, resumeAudioPhase, type DriftMetrics} from './sync-state.js';
+import {advanceDecoderProgressWatchdog, createDecoderProgressWatchdog, type DecoderProgressWatchdog} from './decode-progress.js';
 import {estimateMediaTimeSamples} from './video-clock-estimate.js';
 import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
 
@@ -56,12 +57,15 @@ type Session = {
   preparationTimer: number | null;
 };
 
-type PendingProgress = Readonly<{
+type PendingProgress = {
+  readonly session: Session;
   readonly generation: number;
   readonly accessUnits: number;
   readonly resolve: () => void;
   readonly reject: (error: Error) => void;
-}>;
+  timeoutId: number | null;
+  watchdog: DecoderProgressWatchdog;
+};
 
 let worker: Worker | null = null;
 let audioContext: AudioContext | null = null;
@@ -223,28 +227,67 @@ function resetAudio(generation: number): void {
   pendingProgress = [];
 }
 
-function waitForDecoderProgress(generation: number, accessUnits: number): Promise<void> {
+function isProgressWatchdogPaused(session: Session): boolean {
+  return session.isPaused || session.isBuffering;
+}
+
+function scheduleDecoderProgressTimeout(pending: PendingProgress): void {
+  if (pending.timeoutId !== null || isProgressWatchdogPaused(pending.session)) return;
+  pending.timeoutId = window.setTimeout((): void => {
+    pending.timeoutId = null;
+    if (!pendingProgress.includes(pending)) return;
+    const update = advanceDecoderProgressWatchdog({watchdog: pending.watchdog, nowMs: performance.now(), isPaused: isProgressWatchdogPaused(pending.session)});
+    pending.watchdog = update.state;
+    if (update.expired) {
+      pendingProgress = pendingProgress.filter((entry) => entry !== pending);
+      pending.reject(new Error('OpenJOC decoder made no progress while decoding CMAF audio'));
+      return;
+    }
+    scheduleDecoderProgressTimeout(pending);
+  }, Math.max(1, Math.ceil(pending.watchdog.remainingMs)));
+}
+
+function updateDecoderProgressWatchdogs(session: Session): void {
+  const isPaused = isProgressWatchdogPaused(session);
+  const nowMs = performance.now();
+  for (const pending of pendingProgress) {
+    if (pending.session !== session) continue;
+    const update = advanceDecoderProgressWatchdog({watchdog: pending.watchdog, nowMs, isPaused});
+    pending.watchdog = update.state;
+    if (pending.timeoutId !== null) {
+      window.clearTimeout(pending.timeoutId);
+      pending.timeoutId = null;
+    }
+    if (update.expired) {
+      pendingProgress = pendingProgress.filter((entry) => entry !== pending);
+      pending.reject(new Error('OpenJOC decoder made no progress while decoding CMAF audio'));
+    } else if (!isPaused) {
+      scheduleDecoderProgressTimeout(pending);
+    }
+  }
+}
+
+function waitForDecoderProgress(session: Session, accessUnits: number): Promise<void> {
   if (latestDecoderStatus !== null && latestDecoderStatus.decodedAccessUnits >= accessUnits) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
-    let timeoutId: number | null = null;
     let settled = false;
     const finish = (callback: () => void): void => {
       if (settled) return;
       settled = true;
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      if (pending.timeoutId !== null) window.clearTimeout(pending.timeoutId);
       callback();
     };
     const pending: PendingProgress = {
-      generation,
+      session,
+      generation: session.request.generation,
       accessUnits,
       resolve: () => finish(resolve),
       reject: (error: Error) => finish(() => reject(error)),
+      timeoutId: null,
+      watchdog: createDecoderProgressWatchdog({timeoutMs: DECODER_PROGRESS_TIMEOUT_MS, nowMs: performance.now()}),
     };
     pendingProgress.push(pending);
-    timeoutId = window.setTimeout((): void => {
-      pendingProgress = pendingProgress.filter((entry) => entry !== pending);
-      pending.reject(new Error('OpenJOC decoder made no progress while decoding CMAF audio'));
-    }, DECODER_PROGRESS_TIMEOUT_MS);
+    scheduleDecoderProgressTimeout(pending);
   });
 }
 
@@ -313,7 +356,7 @@ async function pumpSegments(session: Session): Promise<void> {
         decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.request.generation, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm} satisfies WorkerCommand, [buffer]);
         firstSample = false;
         accessUnits += 1;
-        await waitForDecoderProgress(session.request.generation, accessUnits);
+        await waitForDecoderProgress(session, accessUnits);
       }
       session.nextReferenceIndex += 1;
       session.windowEndSamples = Math.max(session.windowEndSamples, reference.ptsSamples + reference.durationSamples);
@@ -507,6 +550,7 @@ function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type
   lastVideoPlaybackRate = message.playbackRate;
   session.isPaused = message.paused;
   session.isBuffering = message.buffering;
+  updateDecoderProgressWatchdogs(session);
   audioNode?.port.postMessage({type: 'clock', generation: message.generation, mediaTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
   worker?.postMessage({type: message.paused || message.buffering ? 'pause' : 'resume', generation: message.generation} satisfies WorkerCommand);
   if (message.paused || message.buffering) {

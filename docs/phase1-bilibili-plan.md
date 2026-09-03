@@ -52,6 +52,8 @@ The CMAF path keeps a 3-second PCM cushion and begins the next bounded fragment 
 
 The offscreen `AudioContext` requests the `playback` latency profile and is periodically resumed if an active, non-paused session observes a non-running context, reducing sensitivity to background-window audio scheduling.
 
+Decoder-progress timeouts measure active decoding time only. Pause and buffering suspend the watchdog so a long user pause cannot convert normal CMAF backpressure into `JOC-MEDIA-UNAVAILABLE`; after resume, the watchdog retains the active-time budget that remained before the pause.
+
 ## Tests and gates
 
 - `npm test` covers transport, URL/message validation, bounded window selection, timestamped queue, sync state, manifest candidate filtering, and the deterministic mock harness.
