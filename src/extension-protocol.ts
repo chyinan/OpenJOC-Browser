@@ -47,6 +47,11 @@ export type PlaybackMetrics = Readonly<{
   readonly decodedAccessUnits: number;
   readonly outputFrames: number;
   readonly outputSamples: number;
+  readonly workletProcessGapMaxMs: number;
+  readonly workletProcessGapOver20MsCount: number;
+  readonly workletPlayedQuantumCount: number;
+  readonly workletSilentQuantumCount: number;
+  readonly workletLastReadType: string | null;
 }>;
 
 export type RuntimeMessage =
@@ -192,7 +197,12 @@ function isPlaybackMetrics(value: unknown): value is PlaybackMetrics {
     && isNullableFiniteNumber(value.outputLatencyMs)
     && isNonNegativeFinite(value.decodedAccessUnits)
     && isNonNegativeFinite(value.outputFrames)
-    && isNonNegativeFinite(value.outputSamples);
+    && isNonNegativeFinite(value.outputSamples)
+    && isNonNegativeFinite(value.workletProcessGapMaxMs)
+    && isNonNegativeFinite(value.workletProcessGapOver20MsCount)
+    && isNonNegativeFinite(value.workletPlayedQuantumCount)
+    && isNonNegativeFinite(value.workletSilentQuantumCount)
+    && isNullableString(value.workletLastReadType);
 }
 
 function isPlaybackPhase(value: unknown): value is PlaybackPhase {

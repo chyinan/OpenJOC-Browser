@@ -26,6 +26,11 @@ type WorkletStats = Readonly<{
   readonly currentAudioMediaSamples: number | null;
   readonly driftMs: number | null;
   readonly resyncCount: number;
+  readonly processGapMaxMs: number;
+  readonly processGapOver20MsCount: number;
+  readonly playedQuantumCount: number;
+  readonly silentQuantumCount: number;
+  readonly lastTimestampedReadType: string | null;
 }>;
 
 type OutputClock = Readonly<{
@@ -71,6 +76,11 @@ let latestWorkletStats: WorkletStats = {
   currentAudioMediaSamples: null,
   driftMs: null,
   resyncCount: 0,
+  processGapMaxMs: 0,
+  processGapOver20MsCount: 0,
+  playedQuantumCount: 0,
+  silentQuantumCount: 0,
+  lastTimestampedReadType: null,
 };
 let latestVideoMediaSamples: number | null = null;
 let lastVideoClockAtMs = 0;
@@ -95,7 +105,7 @@ function base64ToArrayBuffer(value: string): ArrayBuffer {
 }
 
 function isWorkletStats(value: unknown): value is WorkletStats & {readonly type: 'stats'; readonly generation: number} {
-  return isRecord(value) && value.type === 'stats' && typeof value.generation === 'number' && typeof value.queuedAudioMs === 'number' && typeof value.underrunCount === 'number' && typeof value.acceptedSequence === 'number' && (value.currentAudioMediaSamples === null || typeof value.currentAudioMediaSamples === 'number') && (value.driftMs === null || typeof value.driftMs === 'number') && typeof value.resyncCount === 'number';
+  return isRecord(value) && value.type === 'stats' && typeof value.generation === 'number' && typeof value.queuedAudioMs === 'number' && typeof value.underrunCount === 'number' && typeof value.acceptedSequence === 'number' && (value.currentAudioMediaSamples === null || typeof value.currentAudioMediaSamples === 'number') && (value.driftMs === null || typeof value.driftMs === 'number') && typeof value.resyncCount === 'number' && typeof value.processGapMaxMs === 'number' && typeof value.processGapOver20MsCount === 'number' && typeof value.playedQuantumCount === 'number' && typeof value.silentQuantumCount === 'number' && (value.lastTimestampedReadType === null || typeof value.lastTimestampedReadType === 'string');
 }
 
 function isCurrentSession(session: Session): boolean {
@@ -137,6 +147,11 @@ function sendStatus(
     decodedAccessUnits: decoder?.decodedAccessUnits ?? 0,
     outputFrames: decoder?.outputFrames ?? 0,
     outputSamples: decoder?.outputSamples ?? 0,
+    workletProcessGapMaxMs: latestWorkletStats.processGapMaxMs,
+    workletProcessGapOver20MsCount: latestWorkletStats.processGapOver20MsCount,
+    workletPlayedQuantumCount: latestWorkletStats.playedQuantumCount,
+    workletSilentQuantumCount: latestWorkletStats.silentQuantumCount,
+    workletLastReadType: latestWorkletStats.lastTimestampedReadType,
   };
   const message: RuntimeMessage = {target: 'background', type: 'offscreen-status', tabId: session.request.tabId, generation: session.request.generation, phase, reason, inbandJocConfirmed: session.isJocConfirmed, profile: decoder?.profile ?? null, metrics};
   chrome.runtime.sendMessage(message).catch(() => undefined);
@@ -203,7 +218,7 @@ function resetAudio(generation: number): void {
   audioNode?.port.postMessage({type: 'reset', generation});
   latestDecoderStatus = null;
   driftMetrics = createDriftMetrics();
-  latestWorkletStats = {queuedAudioMs: 0, underrunCount: 0, acceptedSequence: 0, currentAudioMediaSamples: null, driftMs: null, resyncCount: 0};
+  latestWorkletStats = {queuedAudioMs: 0, underrunCount: 0, acceptedSequence: 0, currentAudioMediaSamples: null, driftMs: null, resyncCount: 0, processGapMaxMs: 0, processGapOver20MsCount: 0, playedQuantumCount: 0, silentQuantumCount: 0, lastTimestampedReadType: null};
   pendingProgress.forEach((pending) => pending.reject(new Error('OpenJOC playback generation reset')));
   pendingProgress = [];
 }

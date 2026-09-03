@@ -251,6 +251,11 @@ function updateDetails(): void {
     decodedAccessUnits: metrics?.decodedAccessUnits ?? 0,
     outputFrames: metrics?.outputFrames ?? 0,
     outputSamples: metrics?.outputSamples ?? 0,
+    workletProcessGapMaxMs: metrics?.workletProcessGapMaxMs ?? 0,
+    workletProcessGapOver20MsCount: metrics?.workletProcessGapOver20MsCount ?? 0,
+    workletPlayedQuantumCount: metrics?.workletPlayedQuantumCount ?? 0,
+    workletSilentQuantumCount: metrics?.workletSilentQuantumCount ?? 0,
+    workletLastReadType: metrics?.workletLastReadType ?? null,
     underruns: metrics?.underrunCount ?? 0,
     media: metrics?.mediaUrl ?? null,
   }, null, 2);

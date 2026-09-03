@@ -21,6 +21,11 @@ export type ProcessorStats = Readonly<{
   readonly currentAudioMediaSamples: number | null;
   readonly driftMs: number | null;
   readonly resyncCount: number;
+  readonly processGapMaxMs: number;
+  readonly processGapOver20MsCount: number;
+  readonly playedQuantumCount: number;
+  readonly silentQuantumCount: number;
+  readonly lastTimestampedReadType: 'played' | 'wait' | 'trim' | 'underrun' | null;
 }>;
 
 class OpenJocPcmProcessor extends AudioWorkletProcessor {
@@ -35,6 +40,12 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
   private acceptedSequence = 0;
   private masterMediaSamples: number | null = null;
   private resyncCount = 0;
+  private lastProcessWallTimeMs: number | null = null;
+  private processGapMaxMs = 0;
+  private processGapOver20MsCount = 0;
+  private playedQuantumCount = 0;
+  private silentQuantumCount = 0;
+  private lastTimestampedReadType: ProcessorStats['lastTimestampedReadType'] = null;
 
   public constructor(options?: AudioWorkletNodeOptions) {
     super(options);
@@ -55,6 +66,12 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
         this.isBuffering = false;
         this.masterMediaSamples = null;
         this.resyncCount = 0;
+        this.lastProcessWallTimeMs = null;
+        this.processGapMaxMs = 0;
+        this.processGapOver20MsCount = 0;
+        this.playedQuantumCount = 0;
+        this.silentQuantumCount = 0;
+        this.lastTimestampedReadType = null;
         this.postStats();
         return;
       }
@@ -109,6 +126,13 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
     _inputs: Array<Array<Float32Array>>,
     outputs: Array<Array<Float32Array>>,
   ): boolean {
+    const processWallTimeMs = typeof performance === 'undefined' ? this.processCount * 128 * 1_000 / sampleRate : performance.now();
+    if (this.lastProcessWallTimeMs !== null) {
+      const processGapMs = Math.max(0, processWallTimeMs - this.lastProcessWallTimeMs);
+      this.processGapMaxMs = Math.max(this.processGapMaxMs, processGapMs);
+      if (processGapMs >= 20) this.processGapOver20MsCount += 1;
+    }
+    this.lastProcessWallTimeMs = processWallTimeMs;
     const output = outputs[0];
     if (output !== undefined && this.isArmed && !this.isPaused && !this.isBuffering) {
       const hasTimestampedPcm = this.timestampedQueue.currentMediaSamples() !== null || this.masterMediaSamples !== null;
@@ -117,6 +141,9 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
       } else if (hasTimestampedPcm) {
         const result = this.timestampedQueue.readForMasterClock(output, this.masterMediaSamples ?? 0, 2_400, this.isEndOfStream);
         if (result.type === 'trim') this.resyncCount += 1;
+        this.lastTimestampedReadType = result.type;
+        if (result.mediaSamples === null) this.silentQuantumCount += 1;
+        else this.playedQuantumCount += 1;
       } else {
         this.queue.read(output, this.isEndOfStream);
       }
@@ -147,6 +174,11 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
       currentAudioMediaSamples,
       driftMs,
       resyncCount: this.resyncCount,
+      processGapMaxMs: this.processGapMaxMs,
+      processGapOver20MsCount: this.processGapOver20MsCount,
+      playedQuantumCount: this.playedQuantumCount,
+      silentQuantumCount: this.silentQuantumCount,
+      lastTimestampedReadType: this.lastTimestampedReadType,
     };
     this.port.postMessage(stats);
   }
