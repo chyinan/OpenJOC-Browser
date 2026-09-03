@@ -11,10 +11,10 @@ import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from '
 const SAMPLE_RATE = 48_000;
 const MAX_SEGMENTS_PER_WINDOW = 2;
 const PUMP_THRESHOLD_SAMPLES = SAMPLE_RATE * 2;
-const PREPARATION_TIMEOUT_MS = 15_000;
+const PREPARATION_TIMEOUT_MS = 30_000;
 const DECODER_PROGRESS_TIMEOUT_MS = 10_000;
 
-type SessionStage = 'starting-audio' | 'starting-decoder' | 'fetching-index' | 'fetching-segment' | 'decoding' | 'waiting-for-joc-profile' | 'streaming';
+type SessionStage = 'starting-audio' | 'starting-decoder' | 'fetching-index' | 'fetching-page-context-index' | 'fetching-segment' | 'decoding' | 'waiting-for-joc-profile' | 'streaming';
 
 type WorkletStats = Readonly<{
   readonly queuedAudioMs: number;
@@ -307,16 +307,19 @@ async function pumpSegments(session: Session): Promise<void> {
 async function fetchIndexWithFallback(
   request: Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>,
   signal: AbortSignal,
+  updateStage: (stage: SessionStage) => void,
 ): Promise<CmafIndexSession> {
   const urls = [request.candidate.baseUrl, ...request.candidate.backupUrls];
   let lastError: Error | null = null;
   for (const url of urls) {
     try {
+      updateStage('fetching-index');
       return await fetchCmafIndex({url, pageUrl: request.pageUrl, signal});
     } catch (error: unknown) {
       if (signal.aborted) throw error;
-      if (error instanceof Error && error.message.includes('status 403')) {
+      if (error instanceof Error && (error.message.includes('status 403') || error.message.includes('request timed out'))) {
         try {
+          updateStage('fetching-page-context-index');
           const pageResponse = await requestPageRange(request.tabId, request.generation, url, 0, 8_191, signal);
           if (pageResponse.status !== 206) throw new Error(`page-context CMAF range request returned status ${pageResponse.status}`);
           return await fetchCmafIndex({
@@ -397,7 +400,9 @@ async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen
   sendStatus('preparing', null, session);
   try {
     session.stage = 'fetching-index';
-    session.index = await fetchIndexWithFallback(request, session.abort.signal);
+    session.index = await fetchIndexWithFallback(request, session.abort.signal, (stage): void => {
+      if (isCurrentSession(session)) session.stage = stage;
+    });
     if (!isCurrentSession(session)) return;
     const references = selectCmafSegmentWindow(session.index.index, request.videoTimeSamples, MAX_SEGMENTS_PER_WINDOW);
     if (references.length === 0) throw new Error('Bilibili JOC stream has no segment at the current video time');

@@ -6,6 +6,7 @@ import {isAllowedBilibiliMediaUrl, sanitizeMediaUrl} from './media-url-policy.js
 const CMAF_TIMESCALE = 48_000;
 const INIT_RANGE_END = 8_191;
 const MAX_RANGE_BYTES = 4 * 1024 * 1024;
+const RANGE_TIMEOUT_MS = 5_000;
 
 export type CmafFetchOptions = Readonly<{
   readonly url: string;
@@ -81,14 +82,32 @@ async function fetchRange(
     throw new Error('CMAF byte range is outside the bounded fetch limit');
   }
   const fetchImpl = options.fetchImpl ?? fetch;
-  const response = await fetchImpl(options.url, {
-    method: 'GET',
-    credentials: 'include',
-    headers: {Range: `bytes=${start}-${end}`},
-    referrer: options.pageUrl,
-    referrerPolicy: 'no-referrer-when-downgrade',
-    signal,
-  });
+  const requestController = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = (): void => requestController.abort();
+  if (signal.aborted) requestController.abort();
+  else signal.addEventListener('abort', abortFromCaller, {once: true});
+  const timeoutId = globalThis.setTimeout((): void => {
+    timedOut = true;
+    requestController.abort();
+  }, RANGE_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetchImpl(options.url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {Range: `bytes=${start}-${end}`},
+      referrer: options.pageUrl,
+      referrerPolicy: 'no-referrer-when-downgrade',
+      signal: requestController.signal,
+    });
+  } catch (error: unknown) {
+    if (timedOut && !signal.aborted) throw new Error(`Bilibili CMAF range request timed out for bytes ${start}-${end}`);
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+    signal.removeEventListener('abort', abortFromCaller);
+  }
   if (response.status !== 206) {
     throw new Error(`Bilibili CMAF range request returned status ${response.status} for bytes ${start}-${end}`);
   }
