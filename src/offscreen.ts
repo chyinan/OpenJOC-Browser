@@ -6,11 +6,14 @@ import {selectCmafSegmentWindow} from './cmaf-window.js';
 import {isRuntimeMessage, type PlaybackMetrics, type RuntimeMessage} from './extension-protocol.js';
 import {sanitizeMediaUrl} from './media-url-policy.js';
 import {createDriftMetrics, recordDriftSample, resumeAudioPhase, type DriftMetrics} from './sync-state.js';
+import {estimateMediaTimeSamples} from './video-clock-estimate.js';
 import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
 
 const SAMPLE_RATE = 48_000;
 const MAX_SEGMENTS_PER_WINDOW = 2;
 const PUMP_THRESHOLD_SAMPLES = SAMPLE_RATE * 2;
+const PREFETCH_INTERVAL_MS = 250;
+const VIDEO_CLOCK_STALE_AFTER_MS = 350;
 const PREPARATION_TIMEOUT_MS = 30_000;
 const DECODER_PROGRESS_TIMEOUT_MS = 10_000;
 
@@ -70,6 +73,8 @@ let latestWorkletStats: WorkletStats = {
   resyncCount: 0,
 };
 let latestVideoMediaSamples: number | null = null;
+let lastVideoClockAtMs = 0;
+let lastVideoPlaybackRate = 1;
 let driftMetrics: DriftMetrics = createDriftMetrics();
 let outputClock: OutputClock = {contextTime: null, performanceTime: null, baseLatencyMs: null, outputLatencyMs: null};
 let pendingProgress: Array<PendingProgress> = [];
@@ -312,6 +317,19 @@ async function pumpSegments(session: Session): Promise<void> {
   }
 }
 
+function pumpFromEstimatedVideoClock(): void {
+  const session = currentSession;
+  const currentVideo = latestVideoMediaSamples;
+  if (session === null || currentVideo === null || session.isPaused || session.isBuffering) return;
+  const elapsedMs = performance.now() - lastVideoClockAtMs;
+  const estimatedVideo = estimateMediaTimeSamples(currentVideo, elapsedMs, lastVideoPlaybackRate);
+  if (elapsedMs >= VIDEO_CLOCK_STALE_AFTER_MS) {
+    audioNode?.port.postMessage({type: 'clock', generation: session.request.generation, mediaTimeSamples: estimatedVideo, paused: false, buffering: false});
+  }
+  if (session.index === null || session.isStreaming || session.nextReferenceIndex >= session.index.index.references.length) return;
+  if (estimatedVideo + PUMP_THRESHOLD_SAMPLES >= session.windowEndSamples) void pumpSegments(session);
+}
+
 async function fetchIndexWithFallback(
   request: Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>,
   signal: AbortSignal,
@@ -400,6 +418,8 @@ async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen
     if (isCurrentSession(session) && !session.isJocConfirmed) void failSession(`OpenJOC ${session.stage} timed out before JOC PCM became available`);
   }, PREPARATION_TIMEOUT_MS);
   latestVideoMediaSamples = request.videoTimeSamples;
+  lastVideoClockAtMs = performance.now();
+  lastVideoPlaybackRate = 1;
   const context = await ensureAudio();
   session.stage = 'starting-decoder';
   ensureWorker();
@@ -467,6 +487,8 @@ function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type
     return;
   }
   latestVideoMediaSamples = message.mediaTimeSamples;
+  lastVideoClockAtMs = performance.now();
+  lastVideoPlaybackRate = message.playbackRate;
   session.isPaused = message.paused;
   session.isBuffering = message.buffering;
   audioNode?.port.postMessage({type: 'clock', generation: message.generation, mediaTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
@@ -533,3 +555,4 @@ window.setInterval((): void => {
   const session = currentSession;
   if (session !== null) sendStatus(session.phase, null, session);
 }, 1_000);
+window.setInterval(pumpFromEstimatedVideoClock, PREFETCH_INTERVAL_MS);

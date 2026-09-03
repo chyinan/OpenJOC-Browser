@@ -44,6 +44,8 @@ The content controller reports `requestVideoFrameCallback().mediaTime` where ava
 
 Native Bilibili audio is muted only after OpenJOC has reported a non-empty in-band profile and the PCM path is ready. Disable, malformed media, fetch failure, unsupported format/rate, and extension errors clear the OpenJOC queue and restore the prior `muted`, `volume`, and `defaultMuted` state. The page-context fallback is fail-closed on CORS, non-206, mismatched Content-Range, stale generation, or over-bound response.
 
+When a background/minimized page temporarily stops delivering video clock callbacks, offscreen extrapolates from the last real clock only for Worklet clock advancement and bounded CMAF prefetch. It never replaces the page's clock when a real update is available; pause, buffering, seek, and media-change events remain authoritative.
+
 ## Tests and gates
 
 - `npm test` covers transport, URL/message validation, bounded window selection, timestamped queue, sync state, manifest candidate filtering, and the deterministic mock harness.
