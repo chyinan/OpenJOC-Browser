@@ -46,6 +46,8 @@ Native Bilibili audio is muted only after OpenJOC has reported a non-empty in-ba
 
 When a background/minimized page temporarily stops delivering video clock callbacks, offscreen extrapolates from the last real clock only for Worklet clock advancement and bounded CMAF prefetch. It never replaces the page's clock when a real update is available; pause, buffering, seek, and media-change events remain authoritative.
 
+The CMAF path keeps a 3-second PCM cushion and begins the next bounded fragment window with 4 seconds of compressed-media lead to absorb background scheduling and network jitter. The local raw-file path retains its original 1-second decode budget.
+
 ## Tests and gates
 
 - `npm test` covers transport, URL/message validation, bounded window selection, timestamped queue, sync state, manifest candidate filtering, and the deterministic mock harness.

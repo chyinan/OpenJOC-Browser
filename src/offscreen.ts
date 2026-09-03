@@ -11,7 +11,7 @@ import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from '
 
 const SAMPLE_RATE = 48_000;
 const MAX_SEGMENTS_PER_WINDOW = 2;
-const PUMP_THRESHOLD_SAMPLES = SAMPLE_RATE * 2;
+const PUMP_THRESHOLD_SAMPLES = SAMPLE_RATE * 4;
 const PREFETCH_INTERVAL_MS = 250;
 const VIDEO_CLOCK_STALE_AFTER_MS = 350;
 const PREPARATION_TIMEOUT_MS = 30_000;

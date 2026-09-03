@@ -3,12 +3,12 @@
 import {loadOpenJocWasm, WasmDecoderClient, type WasmDecoderStatus} from './wasm-bindings.js';
 import {isCurrentGeneration} from './generation.js';
 import {DecoderGenerationSlot} from './decoder-generation.js';
-import {shouldWaitForCmafAudioBudget} from './decode-backpressure.js';
+import {MAX_CMAF_DECODE_QUEUE_MS, shouldWaitForCmafAudioBudget} from './decode-backpressure.js';
 import {MAX_INPUT_FILE_BYTES, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
 
 const workerScope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 const CHUNK_BYTES = 64 * 1024;
-const MAX_DECODE_QUEUE_MS = 1000;
+const MAX_DECODE_QUEUE_MS = 1_000;
 
 const decoderSlot = new DecoderGenerationSlot<WasmDecoderClient>(
   async (): Promise<WasmDecoderClient> => loadOpenJocWasm(new URL('./wasm/openjoc_wasm.wasm', import.meta.url), {dialnormMode}),
@@ -215,7 +215,7 @@ async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: '
 }
 
 async function waitForCmafPlaybackBudget(): Promise<void> {
-  while (shouldWaitForCmafAudioBudget(queuedAudioMs, MAX_DECODE_QUEUE_MS)) {
+  while (shouldWaitForCmafAudioBudget(queuedAudioMs, MAX_CMAF_DECODE_QUEUE_MS)) {
     await waitForWake();
   }
 }
