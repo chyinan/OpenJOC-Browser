@@ -51,10 +51,12 @@ jobs:
         run: |
           npm run check
           npm test
-          npm run test:lifecycle
 
       - name: Build WASM and extension from source
         run: npm run build
+
+      - name: Run lifecycle integration tests
+        run: npm run test:lifecycle
 
       - name: Run parity gates
         run: |

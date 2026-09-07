@@ -56,11 +56,11 @@ jobs:
       - name: Run functional-core tests
         run: npm test
 
-      - name: Run lifecycle integration tests
-        run: npm run test:lifecycle
-
       - name: Build production extension
         run: npm run build
+
+      - name: Run lifecycle integration tests
+        run: npm run test:lifecycle
 
       - name: Run native/WASM parity
         run: npm run parity
