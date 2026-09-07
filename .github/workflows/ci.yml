@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Check out Browser source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install locked npm dependencies
+        run: npm ci
+
+      - name: Check release policy
+        run: npm run check:release-policy
+
+      - name: Scan tracked files for secrets
+        run: npm run check:secrets
+
+      - name: Check license and notices
+        run: npm run check:license
+
+      - name: Check version consistency
+        run: npm run check:version -- 0.1.0
+
+      - name: Check OpenJOC WASM source
+        run: npm run check:wasm
+
+      - name: Type-check application
+        run: npm run check
+
+      - name: Run functional-core tests
+        run: npm test
+
+      - name: Run lifecycle integration tests
+        run: npm run test:lifecycle
+
+      - name: Build production extension
+        run: npm run build
+
+      - name: Run native/WASM parity
+        run: npm run parity
+
+      - name: Run raw/CMAF parity
+        run: npm run cmaf-parity
+
+      - name: Package release artifact
+        run: npm run package:release -- --version 0.1.0
+
+      - name: Validate release artifact
+        run: npm run validate:release -- --version 0.1.0

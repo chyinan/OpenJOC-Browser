@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out tagged Browser source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install locked npm dependencies
+        run: npm ci
+
+      - name: Validate tag and source policy
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          npm run check:version -- $version
+          npm run check:release-policy
+          npm run check:secrets
+          npm run check:license
+
+      - name: Check pinned OpenJOC WASM source
+        run: npm run check:wasm
+
+      - name: Type-check and test
+        run: |
+          npm run check
+          npm test
+          npm run test:lifecycle
+
+      - name: Build WASM and extension from source
+        run: npm run build
+
+      - name: Run parity gates
+        run: |
+          npm run parity
+          npm run cmaf-parity
+
+      - name: Package and validate release artifact
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          npm run package:release -- --version $version
+          npm run validate:release -- --version $version
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            release/OpenJOC-Browser-${{ github.ref_name }}-chromium.zip
+            release/OpenJOC-Browser-${{ github.ref_name }}-chromium.zip.sha256
