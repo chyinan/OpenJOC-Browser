@@ -7,7 +7,7 @@
 - Rust `1.85` or newer with the `wasm32-unknown-unknown` target.
 - Git, because the build resolves the pinned OpenJOC source repository.
 
-The Browser build uses OpenJOC commit `e123aa3a0e2878587c73130585a5606db4ff233f` from `https://github.com/chyinan/OpenJOC.git`. Without `OPENJOC_ROOT`, the resolver shallow-clones the public `codex/openjoc-wasm-bridge` ref into ignored `.cache/openjoc/<commit>/`, checks out the exact commit, and verifies `HEAD` before invoking Cargo. The branch is only a fetch aid; the build never compiles an unpinned checkout.
+The Browser build uses OpenJOC commit `e123aa3a0e2878587c73130585a5606db4ff233f` from `https://github.com/chyinan/OpenJOC.git`. Without `OPENJOC_ROOT`, the resolver shallow-clones the public `codex/openjoc-wasm-bridge` ref into ignored `.cache/openjoc/<commit>/`, checks out the exact commit, and verifies `HEAD` before invoking Cargo. If Git transport is unavailable, it falls back to the GitHub codeload archive URL for that same commit and verifies an exact pin marker. The branch is only a fetch aid; the build never compiles an unpinned checkout.
 
 For a local checkout, set `OPENJOC_ROOT` to a working tree at that exact commit. The resolver rejects another branch or commit. This override is for development and offline validation; a fresh clone does not require it.
 

@@ -26,7 +26,7 @@ The package script includes all built runtime files under `extension/`, excludes
 
 ## Release workflow
 
-`.github/workflows/release.yml` runs only for a `v*.*.*` tag. It checks that the tag version equals `package.json` and `extension/manifest.json`, installs dependencies with `npm ci`, resolves OpenJOC at the declared commit, runs checks/tests, builds WASM from source, packages the extension, validates the ZIP and checksum, and creates a draft GitHub Release with the ZIP and checksum attached.
+`.github/workflows/release.yml` runs only for a `v*.*.*` tag. It checks that the tag version equals `package.json` and `extension/manifest.json`, installs dependencies with `npm ci`, resolves OpenJOC at the declared commit, runs checks/tests, builds WASM from source, packages the extension, validates the ZIP and checksum, and creates a draft GitHub Release with the ZIP and checksum attached. The source resolver may use the exact-commit GitHub archive only when Git transport is unavailable; it still validates the same source pin.
 
 The workflow has `contents: write` only because creating a GitHub Release requires it. It does not publish to Chrome Web Store or Microsoft Edge Add-ons. A tag is not created by the repository scripts.
 

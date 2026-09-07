@@ -55,14 +55,13 @@ async function downloadPinnedArchive(root) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), SOURCE_FETCH_TIMEOUT_MS);
-    let response;
     try {
-      response = await fetch(OPENJOC_ARCHIVE_URL, {signal: controller.signal});
+      const response = await fetch(OPENJOC_ARCHIVE_URL, {signal: controller.signal});
+      if (!response.ok) throw new Error(`OpenJOC archive request returned status ${response.status}`);
+      writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()));
     } finally {
       clearTimeout(timeoutId);
     }
-    if (!response.ok) throw new Error(`OpenJOC archive request returned status ${response.status}`);
-    writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()));
     run('tar', ['-xzf', archivePath, '-C', extractionRoot], browserRoot);
     const extracted = readdirSync(extractionRoot, {withFileTypes: true}).find((entry) => entry.isDirectory());
     if (extracted === undefined) throw new Error('OpenJOC archive did not contain a source directory');
@@ -75,24 +74,20 @@ async function downloadPinnedArchive(root) {
 }
 
 function readGitHead(root) {
-  const result = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], {encoding: 'utf8'});
-  return result.status === 0 ? result.stdout.trim() : null;
+  const result = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel', 'HEAD'], {encoding: 'utf8'});
+  if (result.status !== 0) return null;
+  const lines = result.stdout.trim().split(/\r?\n/);
+  return resolve(lines[0] ?? '') !== resolve(root) ? null : lines[1] ?? null;
 }
 
 function assertPinnedCheckout(root) {
   if (!existsSync(join(root, 'Cargo.toml'))) {
     throw new Error(`OpenJOC source is missing Cargo.toml: ${root}`);
   }
-  const result = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], {encoding: 'utf8'});
-  if (result.error !== undefined) throw result.error;
-  if (result.status !== 0) {
-    if (readArchivePin(root) === OPENJOC_SOURCE_PIN) return;
-    throw new Error(`OpenJOC source is not a pinned checkout or archive: ${root}`);
-  }
-  const actual = result.stdout.trim();
-  if (actual !== OPENJOC_SOURCE_PIN) {
-    throw new Error(`OpenJOC source pin mismatch: expected ${OPENJOC_SOURCE_PIN}, found ${actual}`);
-  }
+  const actual = readGitHead(root);
+  if (actual === OPENJOC_SOURCE_PIN || readArchivePin(root) === OPENJOC_SOURCE_PIN) return;
+  if (actual !== null) throw new Error(`OpenJOC source pin mismatch: expected ${OPENJOC_SOURCE_PIN}, found ${actual}`);
+  throw new Error(`OpenJOC source is not a pinned checkout or archive: ${root}`);
 }
 
 function readArchivePin(root) {
