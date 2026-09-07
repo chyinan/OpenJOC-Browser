@@ -18,12 +18,24 @@ type MainBridgePageState = {
   readonly cid: string;
 };
 
+type MainBridgeManifest = Readonly<{
+  readonly identity: MainBridgePageState;
+  readonly routeKey: string;
+  readonly candidates: ReadonlyArray<MainBridgeCandidate>;
+}>;
+
 const PAGE_ORIGIN = 'https://www.bilibili.com';
 const API_ORIGIN = 'https://api.bilibili.com';
 const BRIDGE_SOURCE = 'openjoc-bilibili';
 let lastManifestUrl: string | null = null;
 let lastPageManifestFingerprint: string | null = null;
-let manifestRequestInFlight = false;
+const initialRouteKey = pageRouteKey();
+let observedRouteKey = initialRouteKey;
+let observedMediaKey: string | null = null;
+let bootstrapManifest: MainBridgeManifest | null = null;
+let canCaptureBootstrap = true;
+let resolvedManifest: MainBridgeManifest | null = null;
+let pendingManifest: Readonly<{url: string; abort: AbortController}> | null = null;
 const knownMediaUrls = new Set<string>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,13 +69,49 @@ function arrayValue(value: unknown): ReadonlyArray<unknown> {
   return Array.isArray(value) ? value : [];
 }
 
+function pageRouteKey(): string {
+  const url = new URL(location.href);
+  return `${url.pathname.replace(/\/+$/, '')}:p=${url.searchParams.get('p') ?? '1'}`;
+}
+
+function mediaKey(identity: MainBridgePageState | null): string | null {
+  return identity === null ? null : `${identity.bvid}:${identity.aid}:${identity.cid}`;
+}
+
+function requestIdentityForRoute(routeVideo: string | null): MainBridgePageState | null {
+  const currentPart = new URL(location.href).searchParams.get('p') ?? '1';
+  for (const resource of performance.getEntriesByType('resource').slice().reverse()) {
+    try {
+      const url = new URL(resource.name);
+      // Without matching page state, a CID alone cannot prove which part is selected.
+      if (url.searchParams.get('p') !== currentPart) continue;
+      const bvid = url.searchParams.get('bvid');
+      const aid = url.searchParams.get('avid') ?? url.searchParams.get('aid');
+      const cid = url.searchParams.get('cid');
+      if (!nonEmptyString(bvid) || !nonEmptyString(aid) || !nonEmptyString(cid)) continue;
+      const identity = {bvid, aid, cid};
+      if ((routeVideo === bvid || routeVideo === `av${aid}`) && isCurrentManifestUrl(resource.name, identity)) return identity;
+    } catch {
+      // Ignore non-playurl resource names.
+    }
+  }
+  return null;
+}
+
 function pageState(): MainBridgePageState | null {
   const pageWindow = window as Window & {readonly __INITIAL_STATE__?: unknown; readonly __playinfo__?: unknown};
   const root = record(pageWindow.__INITIAL_STATE__);
   const videoData = record(property(root, 'videoData'));
   const bvid = stringValue(property(videoData, 'bvid'), property(root, 'bvid'));
   const aid = identifierValue(property(videoData, 'aid'), property(root, 'aid'));
-  const cid = identifierValue(property(videoData, 'cid'), property(root, 'cid'));
+  const pageUrl = new URL(location.href);
+  const routeVideo = pageUrl.pathname.match(/^\/video\/([^/]+)/)?.[1] ?? null;
+  if (routeVideo !== bvid && routeVideo !== `av${aid}`) return requestIdentityForRoute(routeVideo);
+  const part = Number(pageUrl.searchParams.get('p') ?? '1');
+  const selectedPage = Number.isSafeInteger(part) && part > 0 ? record(arrayValue(property(videoData, 'pages'))[part - 1]) : null;
+  if (!Number.isSafeInteger(part) || part < 1) return null;
+  if (part > 1 && identifierValue(property(selectedPage, 'cid'), null) === null) return requestIdentityForRoute(routeVideo);
+  const cid = identifierValue(property(selectedPage, 'cid'), identifierValue(property(videoData, 'cid'), property(root, 'cid')));
   return bvid !== null && aid !== null && cid !== null ? {bvid, aid, cid} : null;
 }
 
@@ -72,18 +120,11 @@ function pagePlayinfo(): unknown {
   return pageWindow.__playinfo__;
 }
 
-function manifestUrl(): string | null {
+function manifestUrl(identity: MainBridgePageState): string | null {
   const entry = performance.getEntriesByType('resource')
     .map((resource) => resource.name)
     .reverse()
-    .find((name) => {
-      try {
-        const url = new URL(name);
-        return url.origin === API_ORIGIN && url.pathname === '/x/player/wbi/playurl';
-      } catch {
-        return false;
-      }
-    });
+    .find((name) => isCurrentManifestUrl(name, identity));
   return entry ?? null;
 }
 
@@ -103,17 +144,44 @@ function candidatesFromPayload(payload: unknown): ReadonlyArray<MainBridgeCandid
   return result;
 }
 
-function rememberAndEmitManifest(payload: unknown): boolean {
-  const candidates = candidatesFromPayload(payload);
-  const identity = pageState();
-  if (identity === null || candidates.length === 0) return false;
-  candidates.forEach((candidate) => {
+function isCurrentManifest(manifest: MainBridgeManifest): boolean {
+  return manifest.routeKey === pageRouteKey() && mediaKey(manifest.identity) === mediaKey(pageState());
+}
+
+function publishManifest(manifest: MainBridgeManifest, force = false): void {
+  if (!isCurrentManifest(manifest)) return;
+  const fingerprint = `${mediaKey(manifest.identity)}|${manifest.candidates.map(candidate => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|')}`;
+  if (!force && fingerprint === lastPageManifestFingerprint) return;
+  lastPageManifestFingerprint = fingerprint;
+  knownMediaUrls.clear();
+  if (manifest.candidates.length === 0) {
+    emitUnavailable('JOC stream unavailable for the current Bilibili session');
+    return;
+  }
+  manifest.candidates.forEach((candidate) => {
     knownMediaUrls.add(candidate.baseUrl);
     candidate.backupUrls.forEach((url) => knownMediaUrls.add(url));
   });
-  lastPageManifestFingerprint = candidates.map((candidate) => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|');
-  emit({source: BRIDGE_SOURCE, type: 'manifest', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, mediaKey: identity, candidates});
-  return true;
+  emit({source: BRIDGE_SOURCE, type: 'manifest', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, mediaKey: manifest.identity, candidates: manifest.candidates});
+}
+
+function emitUnavailable(reason: string): void {
+  knownMediaUrls.clear();
+  emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason});
+}
+
+function currentBootstrap(identity: MainBridgePageState): MainBridgeManifest | null {
+  // __playinfo__ has no reliable identity and can survive SPA navigation unchanged.
+  // Capture only the original document's bootstrap, never relabel it for another item.
+  if (pageRouteKey() !== initialRouteKey) return null;
+  if (bootstrapManifest === null) {
+    if (!canCaptureBootstrap) return null;
+    const payload = pagePlayinfo();
+    const data = record(property(record(payload), 'data'));
+    if (record(property(data, 'dash')) === null && record(property(data, 'dolby')) === null) return null;
+    bootstrapManifest = {identity, routeKey: initialRouteKey, candidates: candidatesFromPayload(payload)};
+  }
+  return isCurrentManifest(bootstrapManifest) ? bootstrapManifest : null;
 }
 
 function collect(
@@ -149,16 +217,22 @@ function collect(
   });
 }
 
-function isCurrentManifestUrl(value: string): boolean {
+function isCurrentManifestUrl(value: string, identity: MainBridgePageState): boolean {
   try {
     const url = new URL(value);
-    return url.origin === API_ORIGIN && url.pathname === '/x/player/wbi/playurl';
+    const bvid = url.searchParams.get('bvid');
+    const aid = url.searchParams.get('avid') ?? url.searchParams.get('aid');
+    return url.origin === API_ORIGIN && url.pathname === '/x/player/wbi/playurl'
+      && url.searchParams.get('cid') === identity.cid
+      && (bvid === null || bvid === identity.bvid)
+      && (aid === null || aid === identity.aid);
   } catch {
     return false;
   }
 }
 
 function isAllowedMediaRangeMessage(value: Record<string, unknown>): boolean {
+  if (resolvedManifest === null || !isCurrentManifest(resolvedManifest)) return false;
   if (value.source !== 'openjoc-content' || value.type !== 'fetch-media-range' || !nonEmptyString(value.requestId) || !nonEmptyString(value.url) || !Number.isSafeInteger(value.start) || !Number.isSafeInteger(value.end)) return false;
   const start = value.start as number;
   const end = value.end as number;
@@ -170,43 +244,66 @@ function isAllowedMediaRangeMessage(value: Record<string, unknown>): boolean {
   }
 }
 
-async function fetchManifest(url: string): Promise<void> {
-  if (manifestRequestInFlight || !isCurrentManifestUrl(url)) return;
-  manifestRequestInFlight = true;
+async function fetchManifest(url: string, identity: MainBridgePageState): Promise<void> {
+  if (pendingManifest?.url === url || !isCurrentManifestUrl(url, identity)) return;
+  pendingManifest?.abort.abort();
+  const request = {url, abort: new AbortController()};
+  const routeKey = pageRouteKey();
+  pendingManifest = request;
+  const isCurrentRequest = (): boolean => pendingManifest === request && !request.abort.signal.aborted
+    && routeKey === pageRouteKey() && mediaKey(identity) === mediaKey(pageState());
   try {
-    const response = await fetch(url, {credentials: 'include'});
-    if (!response.ok) {
-      if (rememberAndEmitManifest(pagePlayinfo())) return;
-      emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: `playback manifest returned status ${response.status}`});
-      return;
-    }
-    if (!rememberAndEmitManifest(await response.json()) && !rememberAndEmitManifest(pagePlayinfo())) {
-      emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: 'JOC stream unavailable for the current Bilibili session'});
-      return;
-    }
-  } catch {
-    if (rememberAndEmitManifest(pagePlayinfo())) return;
-    emit({source: BRIDGE_SOURCE, type: 'unavailable', pageOrigin: PAGE_ORIGIN, pageUrl: location.href, reason: 'failed to read the current Bilibili playback manifest'});
+    const response = await fetch(url, {credentials: 'include', signal: request.abort.signal});
+    if (!response.ok) throw new Error(`playback manifest returned status ${response.status}`);
+    const payload: unknown = await response.json();
+    if (!isCurrentRequest()) return;
+    // A successful AAC-only response is authoritative; never fall back to old JOC globals.
+    resolvedManifest = {identity, routeKey, candidates: candidatesFromPayload(payload)};
+    if (canCaptureBootstrap && routeKey === initialRouteKey && bootstrapManifest === null) bootstrapManifest = resolvedManifest;
+    publishManifest(resolvedManifest, true);
+  } catch (error: unknown) {
+    if (!isCurrentRequest()) return;
+    const fallback = resolvedManifest ?? currentBootstrap(identity);
+    if (fallback !== null && isCurrentManifest(fallback)) {
+      resolvedManifest = fallback;
+      publishManifest(fallback, true);
+    } else emitUnavailable(error instanceof Error ? error.message : 'failed to read the current Bilibili playback manifest');
   } finally {
-    manifestRequestInFlight = false;
+    if (pendingManifest === request) pendingManifest = null;
   }
 }
 
 function scan(force = false): void {
-  const payload = pagePlayinfo();
-  const candidates = candidatesFromPayload(payload);
-  if (candidates.length > 0) {
-    const fingerprint = candidates.map((candidate) => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|');
-    if (force || fingerprint !== lastPageManifestFingerprint) rememberAndEmitManifest(payload);
-    return;
+  const routeKey = pageRouteKey();
+  const identity = pageState();
+  const identityKey = mediaKey(identity);
+  if (routeKey !== observedRouteKey || identityKey !== observedMediaKey) {
+    const hadMedia = observedMediaKey !== null || routeKey !== observedRouteKey;
+    if (hadMedia) canCaptureBootstrap = false;
+    observedRouteKey = routeKey;
+    observedMediaKey = identityKey;
+    pendingManifest?.abort.abort();
+    pendingManifest = null;
+    resolvedManifest = null;
+    lastManifestUrl = null;
+    lastPageManifestFingerprint = null;
+    knownMediaUrls.clear();
+    if (hadMedia) emitUnavailable('waiting for the current Bilibili media identity');
   }
-  const next = manifestUrl();
+  if (identity === null) return;
+  const bootstrap = currentBootstrap(identity);
+  const next = manifestUrl(identity);
   if (next !== null && (force || next !== lastManifestUrl)) {
     lastManifestUrl = next;
-    void fetchManifest(next);
+    void fetchManifest(next, identity);
     return;
   }
-  if (manifestRequestInFlight) return;
+  if (pendingManifest !== null) return;
+  const manifest = resolvedManifest ?? bootstrap;
+  if (manifest !== null) {
+    resolvedManifest = manifest;
+    publishManifest(manifest, force);
+  }
 }
 
 window.addEventListener('message', (event: MessageEvent<unknown>): void => {

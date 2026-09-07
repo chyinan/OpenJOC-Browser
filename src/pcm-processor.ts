@@ -3,6 +3,8 @@
 import {PcmQueue} from './audio-queue.js';
 import {TimestampedPcmQueue} from './timestamped-pcm-queue.js';
 import {advanceMediaTimeSamples} from './video-clock-estimate.js';
+import {accumulateAudioLevel, averageAudioLevelDb, createAudioLevelAccumulator, type AudioLevelAccumulator} from './audio-level.js';
+import {OUTPUT_GAIN_MAX_AMPLITUDE} from './output-gain.js';
 
 type ProcessorMessage =
   | Readonly<{type: 'pcm'; generation: number; sequence: number; buffer: ArrayBuffer; ptsSamples: number | null}>
@@ -17,6 +19,7 @@ export type ProcessorStats = Readonly<{
   readonly queuedAudioMs: number;
   readonly underrunCount: number;
   readonly sampleRate: number;
+  readonly averageDb: number | null;
   readonly isEndOfStream: boolean;
   readonly acceptedSequence: number;
   readonly currentAudioMediaSamples: number | null;
@@ -30,8 +33,14 @@ export type ProcessorStats = Readonly<{
 }>;
 
 class OpenJocPcmProcessor extends AudioWorkletProcessor {
+  public static get parameterDescriptors(): Array<{name: string; defaultValue: number; minValue: number; maxValue: number; automationRate: 'a-rate'}> {
+    return [{name: 'outputGain', defaultValue: 1, minValue: 0, maxValue: OUTPUT_GAIN_MAX_AMPLITUDE, automationRate: 'a-rate'}];
+  }
+
   private readonly queue: PcmQueue;
   private readonly timestampedQueue: TimestampedPcmQueue;
+  private audioLevelAccumulator: AudioLevelAccumulator = createAudioLevelAccumulator();
+  private averageDb: number | null = null;
   private processCount = 0;
   private isEndOfStream = false;
   private isArmed = false;
@@ -60,6 +69,8 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
         this.generation = event.data.generation;
         this.queue.reset();
         this.timestampedQueue.reset();
+        this.audioLevelAccumulator = createAudioLevelAccumulator();
+        this.averageDb = null;
         this.acceptedSequence = 0;
         this.isEndOfStream = false;
         this.isArmed = false;
@@ -126,6 +137,7 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
   public process(
     _inputs: Array<Array<Float32Array>>,
     outputs: Array<Array<Float32Array>>,
+    parameters: Readonly<Record<string, Float32Array>> = {},
   ): boolean {
     const processWallTimeMs = typeof performance === 'undefined' ? this.processCount * 128 * 1_000 / sampleRate : performance.now();
     if (this.lastProcessWallTimeMs !== null) {
@@ -151,6 +163,22 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
     } else if (output !== undefined) {
       output.forEach((channel) => channel.fill(0));
     }
+    if (output !== undefined && this.isArmed && !this.isPaused && !this.isBuffering) {
+      const gain = parameters.outputGain;
+      if (gain !== undefined && (gain.length !== 1 || gain[0] !== 1)) {
+        for (const channel of output) {
+          for (let index = 0; index < channel.length; index += 1) {
+            channel[index] = (channel[index] ?? 0) * (gain[gain.length === 1 ? 0 : index] ?? 1);
+          }
+        }
+      }
+      this.audioLevelAccumulator = accumulateAudioLevel(this.audioLevelAccumulator, output);
+      const channelCount = Math.max(1, output.length);
+      if (this.audioLevelAccumulator.sampleCount >= sampleRate * channelCount) {
+        this.averageDb = averageAudioLevelDb(this.audioLevelAccumulator);
+        this.audioLevelAccumulator = createAudioLevelAccumulator();
+      }
+    }
     this.masterMediaSamples = advanceMediaTimeSamples(this.masterMediaSamples, output?.[0]?.length ?? 0, output !== undefined && !this.isPaused && !this.isBuffering);
     this.processCount += 1;
     if (this.processCount % 32 === 0) {
@@ -171,6 +199,7 @@ class OpenJocPcmProcessor extends AudioWorkletProcessor {
       queuedAudioMs: hasTimestampedPcm ? this.timestampedQueue.queuedAudioMs() : this.queue.queuedAudioMs(),
       underrunCount: hasTimestampedPcm ? this.timestampedQueue.underrunCount() : this.queue.underrunCount(),
       sampleRate,
+      averageDb: this.averageDb,
       isEndOfStream: this.isEndOfStream,
       acceptedSequence: this.acceptedSequence,
       currentAudioMediaSamples,

@@ -1,10 +1,12 @@
 // pattern: Imperative Shell
 
 import {MAX_INPUT_FILE_BYTES, type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
+import {type RendererMode} from './extension-protocol.js';
 
 const PHASE0_SAMPLE_RATE = 48_000;
 const PHASE0_CHANNELS = 2;
 const PREROLL_MS = 128;
+const rendererMode: RendererMode = new URL(location.href).searchParams.get('renderer') === 'binaural' ? 'binaural' : 'stereo';
 
 const fileInput = requireElement<HTMLInputElement>('file-input');
 const playButton = requireElement<HTMLButtonElement>('play-button');
@@ -211,7 +213,10 @@ function renderDiagnostics(): void {
     downmixIndex: status.downmixIndex,
     objects: status.objectCount,
     complexityIndex: status.complexityIndex,
-    renderer: 'Stereo (Speakers)',
+    renderer: status.renderer,
+    virtualLayout: status.virtualLayout,
+    hrtf: status.hrtf,
+    latencySamples: status.latencySamples,
     sampleRate: status.sampleRate,
     outputChannels: status.outputChannels,
     queueAudioMs: Number(latestQueueAudioMs.toFixed(2)),
@@ -227,6 +232,9 @@ function renderDiagnostics(): void {
     renderMeanMs: status.renderMeanMs,
     renderP95Ms: status.renderP95Ms,
     renderMaxMs: status.renderMaxMs,
+    binauralMeanMs: status.binauralMeanMs,
+    binauralP95Ms: status.binauralP95Ms,
+    binauralMaxMs: status.binauralMaxMs,
     totalMeanMs: status.totalMeanMs,
     totalP95Ms: status.totalP95Ms,
     totalMaxMs: status.totalMaxMs,
@@ -285,7 +293,7 @@ async function playSelectedFile(): Promise<void> {
     return;
   }
   hasDecodeStarted = true;
-  sendWorkerCommand({type: 'decode', generation: playbackGeneration, bytes}, [bytes]);
+  sendWorkerCommand({type: 'decode', generation: playbackGeneration, bytes, renderer: rendererMode}, [bytes]);
   await preroll;
   if (!isPlaying || operationGeneration !== playbackGeneration) {
     return;

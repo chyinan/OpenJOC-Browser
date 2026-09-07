@@ -1,20 +1,22 @@
 // pattern: Imperative Shell
 
-import {readFileSync, writeFileSync} from 'node:fs';
+import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {resolve, dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {resolveOpenjocRoot} from './openjoc-source.mjs';
 
 const browserRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const openjocRoot = process.env.OPENJOC_ROOT === undefined
-  ? resolve(browserRoot, '..', 'OpenJOC')
-  : resolve(process.env.OPENJOC_ROOT);
+const openjocRoot = await resolveOpenjocRoot();
 const fixture = resolve(process.argv[2] ?? join(browserRoot, 'fixtures', 'joc.lifecycle.ec3'));
+const renderer = process.argv.includes('--binaural') ? 'binaural' : 'stereo';
+const dialnorm = process.argv.includes('--unity') ? 'unity' : 'calibrated';
 const artifactRoot = join(browserRoot, 'artifacts');
 const nativeOutput = join(artifactRoot, 'native.f32le');
 const nativeMetadataOutput = join(artifactRoot, 'native.meta');
 const wasmOutput = join(artifactRoot, 'wasm.f32le');
 const cargo = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
+mkdirSync(artifactRoot, {recursive: true});
 
 function runNativeReference() {
   const result = spawnSync(cargo, [
@@ -23,7 +25,7 @@ function runNativeReference() {
     '-p', 'openjoc-wasm',
     '--example', 'dump-native-pcm',
     '--release',
-    '--', fixture, nativeOutput, nativeMetadataOutput,
+    '--', fixture, nativeOutput, nativeMetadataOutput, renderer === 'binaural' ? '--binaural' : '--stereo', dialnorm === 'unity' ? '--unity' : '--calibrated',
   ], {cwd: openjocRoot, stdio: 'inherit'});
   if (result.error !== undefined) {
     throw result.error;
@@ -43,7 +45,7 @@ function decodeWasm() {
     },
   }).then(({instance}) => {
     const exports_ = instance.exports;
-    const decoder = exports_.openjoc_wasm_decoder_create();
+    const decoder = exports_.openjoc_wasm_decoder_create_with_renderer(dialnorm === 'unity' ? 1 : 0, renderer === 'binaural' ? 1 : 0);
     const initialMemoryBytes = exports_.memory.buffer.byteLength;
     let peakMemoryBytes = initialMemoryBytes;
     const recordMemory = () => {
@@ -109,10 +111,15 @@ function decodeWasm() {
       renderMeanMs: exports_.openjoc_wasm_decoder_render_mean_ms(decoder),
       renderP95Ms: exports_.openjoc_wasm_decoder_render_p95_ms(decoder),
       renderMaxMs: exports_.openjoc_wasm_decoder_render_max_ms(decoder),
+      binauralMeanMs: exports_.openjoc_wasm_decoder_binaural_mean_ms(decoder),
+      binauralP95Ms: exports_.openjoc_wasm_decoder_binaural_p95_ms(decoder),
+      binauralMaxMs: exports_.openjoc_wasm_decoder_binaural_max_ms(decoder),
       totalMeanMs: exports_.openjoc_wasm_decoder_total_mean_ms(decoder),
       totalP95Ms: exports_.openjoc_wasm_decoder_total_p95_ms(decoder),
       totalMaxMs: exports_.openjoc_wasm_decoder_total_max_ms(decoder),
       realtimeFactor: exports_.openjoc_wasm_decoder_realtime_factor(decoder),
+      renderer: exports_.openjoc_wasm_decoder_renderer(decoder) === 1 ? 'binaural' : 'stereo',
+      latencySamples: exports_.openjoc_wasm_decoder_latency_samples(decoder),
     };
     exports_.openjoc_wasm_decoder_destroy(decoder);
     return result;
@@ -140,22 +147,6 @@ function parseMetadata(text) {
 }
 
 function assertMetadata(nativeMetadata, wasm) {
-  const expected = {
-    sample_rate: '48000',
-    channels: '2',
-    frame_count: '129',
-    samples: '196640',
-    access_units: '128',
-    profile: 'etsi-strict',
-    downmix_index: '0',
-    object_count: '1',
-    complexity_index: '1',
-  };
-  for (const [key, value] of Object.entries(expected)) {
-    if (nativeMetadata[key] !== value) {
-      throw new Error(`native metadata mismatch: ${key}=${nativeMetadata[key]}`);
-    }
-  }
   const actual = {
     sample_rate: String(wasm.sampleRate),
     channels: String(wasm.channels),
@@ -166,11 +157,33 @@ function assertMetadata(nativeMetadata, wasm) {
     downmix_index: String(wasm.downmixIndex),
     object_count: String(wasm.objectCount),
     complexity_index: String(wasm.complexityIndex),
+    renderer: wasm.renderer,
+    dialnorm,
+    virtual_layout: wasm.renderer === 'binaural' ? '7.1.4' : 'none',
+    hrtf: wasm.renderer === 'binaural' ? 'Built-in SADIE II D1' : 'none',
   };
-  for (const [key, value] of Object.entries(expected)) {
-    if (actual[key] !== value) {
-      throw new Error(`WASM metadata mismatch: ${key}=${actual[key]}`);
+  const comparableKeys = [
+    'sample_rate',
+    'channels',
+    'frame_count',
+    'samples',
+    'access_units',
+    'profile',
+    'downmix_index',
+    'object_count',
+    'complexity_index',
+    'renderer',
+    'dialnorm',
+    'virtual_layout',
+    'hrtf',
+  ];
+  for (const key of comparableKeys) {
+    if (nativeMetadata[key] !== actual[key]) {
+      throw new Error(`native/WASM metadata mismatch: ${key} native=${nativeMetadata[key]} wasm=${actual[key]}`);
     }
+  }
+  if (nativeMetadata.sample_rate !== '48000' || nativeMetadata.channels !== '2' || nativeMetadata.renderer !== renderer || nativeMetadata.dialnorm !== dialnorm) {
+    throw new Error(`native metadata violates renderer contract: ${JSON.stringify(nativeMetadata)}`);
   }
   const nativeDurationMs = Number(nativeMetadata.duration_ms);
   const wasmDurationMs = wasm.samples * 1000 / wasm.sampleRate;
@@ -193,10 +206,26 @@ function assertMetadata(nativeMetadata, wasm) {
       throw new Error(`WASM performance metric is invalid: ${value}`);
     }
   }
+  if (wasm.renderer !== renderer) {
+    throw new Error(`WASM renderer mismatch: native=${renderer} wasm=${wasm.renderer}`);
+  }
+  if (!Number.isSafeInteger(wasm.latencySamples) || wasm.latencySamples < 0) {
+    throw new Error(`WASM latency metric is invalid: ${wasm.latencySamples}`);
+  }
+  if (renderer === 'binaural') {
+    for (const value of [wasm.binauralMeanMs, wasm.binauralP95Ms, wasm.binauralMaxMs]) {
+      if (!(value > 0) || !Number.isFinite(value)) {
+        throw new Error(`WASM Binaural performance metric is invalid: ${value}`);
+      }
+    }
+  } else if (wasm.binauralMeanMs !== 0 || wasm.binauralP95Ms !== 0 || wasm.binauralMaxMs !== 0) {
+    throw new Error(`Stereo unexpectedly reported Binaural timing: ${JSON.stringify(wasm)}`);
+  }
   if (!Number.isSafeInteger(wasm.memoryBytes) || !Number.isSafeInteger(wasm.memoryPeakBytes) || !Number.isSafeInteger(wasm.memoryGrowthBytes) || wasm.memoryGrowthBytes < 0 || wasm.memoryPeakBytes > 128 * 1024 * 1024) {
     throw new Error(`WASM memory metrics are invalid: ${JSON.stringify({bytes: wasm.memoryBytes, peak: wasm.memoryPeakBytes, growth: wasm.memoryGrowthBytes})}`);
   }
 }
+
 
 runNativeReference();
 const native = readFileSync(nativeOutput);
@@ -215,7 +244,7 @@ if (!native.equals(wasm.pcm)) {
   }
   throw new Error(`NATIVE_VS_WASM_PCM mismatch at byte ${offset}`);
 }
-console.log(`NATIVE_VS_WASM_PCM=BIT_IDENTICAL bytes=${wasm.pcm.length}`);
-console.log(`WASM sample_rate=${wasm.sampleRate} channels=${wasm.channels} access_units=${wasm.accessUnits} samples=${wasm.samples}`);
-console.log(`WASM timing decode_ms=${wasm.decodeMeanMs.toFixed(3)}/${wasm.decodeP95Ms.toFixed(3)}/${wasm.decodeMaxMs.toFixed(3)} render_ms=${wasm.renderMeanMs.toFixed(3)}/${wasm.renderP95Ms.toFixed(3)}/${wasm.renderMaxMs.toFixed(3)} total_ms=${wasm.totalMeanMs.toFixed(3)}/${wasm.totalP95Ms.toFixed(3)}/${wasm.totalMaxMs.toFixed(3)} realtime_factor=${wasm.realtimeFactor.toFixed(3)}`);
+console.log(`NATIVE_VS_WASM_PCM=BIT_IDENTICAL renderer=${renderer} dialnorm=${dialnorm} bytes=${wasm.pcm.length}`);
+console.log(`WASM sample_rate=${wasm.sampleRate} channels=${wasm.channels} access_units=${wasm.accessUnits} samples=${wasm.samples} latency_samples=${wasm.latencySamples}`);
+console.log(`WASM timing decode_ms=${wasm.decodeMeanMs.toFixed(3)}/${wasm.decodeP95Ms.toFixed(3)}/${wasm.decodeMaxMs.toFixed(3)} render_ms=${wasm.renderMeanMs.toFixed(3)}/${wasm.renderP95Ms.toFixed(3)}/${wasm.renderMaxMs.toFixed(3)} binaural_ms=${wasm.binauralMeanMs.toFixed(3)}/${wasm.binauralP95Ms.toFixed(3)}/${wasm.binauralMaxMs.toFixed(3)} total_ms=${wasm.totalMeanMs.toFixed(3)}/${wasm.totalP95Ms.toFixed(3)}/${wasm.totalMaxMs.toFixed(3)} realtime_factor=${wasm.realtimeFactor.toFixed(3)}`);
 console.log(`WASM memory bytes=${wasm.memoryBytes} peak=${wasm.memoryPeakBytes} growth=${wasm.memoryGrowthBytes}`);

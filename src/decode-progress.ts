@@ -3,11 +3,13 @@
 export type DecoderProgressWatchdog = Readonly<{
   readonly remainingMs: number;
   readonly observedAtMs: number;
+  readonly isPaused: boolean;
 }>;
 
 export type CreateDecoderProgressWatchdogOptions = Readonly<{
   readonly timeoutMs: number;
   readonly nowMs: number;
+  readonly isPaused?: boolean;
 }>;
 
 export type AdvanceDecoderProgressWatchdogOptions = Readonly<{
@@ -28,7 +30,7 @@ export function createDecoderProgressWatchdog(options: CreateDecoderProgressWatc
   if (!Number.isFinite(options.nowMs) || options.nowMs < 0) {
     throw new Error('decoder progress clock is invalid');
   }
-  return {remainingMs: options.timeoutMs, observedAtMs: options.nowMs};
+  return {remainingMs: options.timeoutMs, observedAtMs: options.nowMs, isPaused: options.isPaused ?? false};
 }
 
 export function advanceDecoderProgressWatchdog(options: AdvanceDecoderProgressWatchdogOptions): DecoderProgressWatchdogUpdate {
@@ -40,6 +42,10 @@ export function advanceDecoderProgressWatchdog(options: AdvanceDecoderProgressWa
     throw new Error('decoder progress clock moved backwards');
   }
   const elapsedMs = nowMs - watchdog.observedAtMs;
-  const remainingMs = isPaused ? watchdog.remainingMs : Math.max(0, watchdog.remainingMs - elapsedMs);
-  return {state: {remainingMs, observedAtMs: nowMs}, expired: !isPaused && remainingMs === 0};
+  const remainingMs = isPaused || watchdog.isPaused ? watchdog.remainingMs : Math.max(0, watchdog.remainingMs - elapsedMs);
+  return {state: {remainingMs, observedAtMs: nowMs, isPaused}, expired: !isPaused && remainingMs === 0};
+}
+
+export function hasDecoderMadeProgress(previousAccessUnits: number, currentAccessUnits: number): boolean {
+  return currentAccessUnits > previousAccessUnits;
 }

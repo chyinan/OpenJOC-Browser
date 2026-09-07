@@ -8,6 +8,7 @@ type ChromeTab = Readonly<{
 type ChromeMessageSender = Readonly<{
   readonly tab?: ChromeTab;
   readonly id?: string;
+  readonly documentId?: string;
 }>;
 
 type ChromeOffscreenContextQuery = Readonly<{
@@ -29,6 +30,12 @@ declare const chrome: {
       addListener(listener: (message: unknown, sender: ChromeMessageSender, sendResponse: (response: unknown) => void) => boolean | void): void;
     };
     readonly getContexts?: (options: ChromeOffscreenContextQuery) => Promise<ReadonlyArray<unknown>>;
+  };
+  readonly storage: {
+    readonly local: {
+      get(keys?: string | ReadonlyArray<string> | null): Promise<Readonly<Record<string, unknown>>>;
+      set(items: Readonly<Record<string, unknown>>): Promise<void>;
+    };
   };
   readonly tabs: {
     create(options: Readonly<{url: string}>): void;

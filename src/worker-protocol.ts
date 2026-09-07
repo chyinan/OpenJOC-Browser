@@ -1,10 +1,12 @@
 // pattern: Functional Core
 
+import {type RendererMode} from './extension-protocol.js';
+
 export const MAX_INPUT_FILE_BYTES = 128 * 1024 * 1024;
 
 export type WorkerCommand =
-  | Readonly<{type: 'decode'; generation: number; bytes: ArrayBuffer}>
-  | Readonly<{type: 'decode-cmaf-sample'; generation: number; bytes: ArrayBuffer; ptsSamples: number; discontinuity: boolean; preroll: boolean; dialnorm: 'calibrated' | 'unity'}>
+  | Readonly<{type: 'decode'; generation: number; bytes: ArrayBuffer; renderer?: RendererMode}>
+  | Readonly<{type: 'decode-cmaf-sample'; generation: number; bytes: ArrayBuffer; ptsSamples: number; discontinuity: boolean; preroll: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode}>
   | Readonly<{type: 'end-cmaf'; generation: number}>
   | Readonly<{type: 'pause'; generation: number}>
   | Readonly<{type: 'resume'; generation: number}>
@@ -12,6 +14,10 @@ export type WorkerCommand =
   | Readonly<{type: 'queue-stats'; generation: number; queuedAudioMs: number; acceptedSequence: number}>;
 
 export type DecoderWorkerStatus = Readonly<{
+  readonly renderer: RendererMode;
+  readonly virtualLayout: '7.1.4' | null;
+  readonly hrtf: 'Built-in SADIE II D1' | null;
+  readonly latencySamples: number;
   readonly sampleRate: number | null;
   readonly outputChannels: number;
   readonly queuedAudioMs: number;
@@ -26,6 +32,9 @@ export type DecoderWorkerStatus = Readonly<{
   readonly renderMeanMs: number;
   readonly renderP95Ms: number;
   readonly renderMaxMs: number;
+  readonly binauralMeanMs: number;
+  readonly binauralP95Ms: number;
+  readonly binauralMaxMs: number;
   readonly totalMeanMs: number;
   readonly totalP95Ms: number;
   readonly totalMaxMs: number;

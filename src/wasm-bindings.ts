@@ -3,6 +3,10 @@
 export type WasmDecoderStatus = 0 | 1 | 2 | 3 | -1;
 
 export type WasmDecoderSnapshot = Readonly<{
+  readonly renderer: 'stereo' | 'binaural';
+  readonly virtualLayout: '7.1.4' | null;
+  readonly hrtf: 'Built-in SADIE II D1' | null;
+  readonly latencySamples: number;
   readonly sampleRate: number | null;
   readonly outputChannels: number;
   readonly queuedAudioMs: number;
@@ -17,6 +21,9 @@ export type WasmDecoderSnapshot = Readonly<{
   readonly renderMeanMs: number;
   readonly renderP95Ms: number;
   readonly renderMaxMs: number;
+  readonly binauralMeanMs: number;
+  readonly binauralP95Ms: number;
+  readonly binauralMaxMs: number;
   readonly totalMeanMs: number;
   readonly totalP95Ms: number;
   readonly totalMaxMs: number;
@@ -52,6 +59,7 @@ export type WasmPacketOptions = Readonly<{
 
 export type WasmDecoderOptions = Readonly<{
   readonly dialnormMode?: 'calibrated' | 'unity';
+  readonly renderer?: 'stereo' | 'binaural';
 }>;
 
 type WasmExports = Readonly<{
@@ -60,6 +68,7 @@ type WasmExports = Readonly<{
   readonly openjoc_wasm_dealloc: WasmNumberFunction;
   readonly openjoc_wasm_decoder_create: WasmNumberFunction;
   readonly openjoc_wasm_decoder_create_with_dialnorm: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_create_with_renderer: WasmNumberFunction;
   readonly openjoc_wasm_decoder_destroy: WasmNumberFunction;
   readonly openjoc_wasm_decoder_push_bytes: WasmNumberFunction;
   readonly openjoc_wasm_decoder_push_packet: WasmPacketFunction;
@@ -73,6 +82,8 @@ type WasmExports = Readonly<{
   readonly openjoc_wasm_decoder_pcm_pts_samples: (handle: number) => bigint;
   readonly openjoc_wasm_decoder_sample_rate: WasmNumberFunction;
   readonly openjoc_wasm_decoder_channel_count: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_renderer: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_latency_samples: WasmNumberFunction;
   readonly openjoc_wasm_decoder_queued_audio_ms: WasmNumberFunction;
   readonly openjoc_wasm_decoder_decoded_access_units: WasmNumberFunction;
   readonly openjoc_wasm_decoder_output_frames: WasmNumberFunction;
@@ -83,6 +94,9 @@ type WasmExports = Readonly<{
   readonly openjoc_wasm_decoder_render_mean_ms: WasmNumberFunction;
   readonly openjoc_wasm_decoder_render_p95_ms: WasmNumberFunction;
   readonly openjoc_wasm_decoder_render_max_ms: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_binaural_mean_ms: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_binaural_p95_ms: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_binaural_max_ms: WasmNumberFunction;
   readonly openjoc_wasm_decoder_total_mean_ms: WasmNumberFunction;
   readonly openjoc_wasm_decoder_total_p95_ms: WasmNumberFunction;
   readonly openjoc_wasm_decoder_total_max_ms: WasmNumberFunction;
@@ -149,6 +163,7 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
     openjoc_wasm_dealloc: requireFunction(raw, 'openjoc_wasm_dealloc'),
     openjoc_wasm_decoder_create: requireFunction(raw, 'openjoc_wasm_decoder_create'),
     openjoc_wasm_decoder_create_with_dialnorm: requireFunction(raw, 'openjoc_wasm_decoder_create_with_dialnorm'),
+    openjoc_wasm_decoder_create_with_renderer: requireFunction(raw, 'openjoc_wasm_decoder_create_with_renderer'),
     openjoc_wasm_decoder_destroy: requireFunction(raw, 'openjoc_wasm_decoder_destroy'),
     openjoc_wasm_decoder_push_bytes: requireFunction(raw, 'openjoc_wasm_decoder_push_bytes'),
     openjoc_wasm_decoder_push_packet: requirePacketFunction(raw, 'openjoc_wasm_decoder_push_packet'),
@@ -162,6 +177,8 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
     openjoc_wasm_decoder_pcm_pts_samples: requirePtsFunction(raw, 'openjoc_wasm_decoder_pcm_pts_samples'),
     openjoc_wasm_decoder_sample_rate: requireFunction(raw, 'openjoc_wasm_decoder_sample_rate'),
     openjoc_wasm_decoder_channel_count: requireFunction(raw, 'openjoc_wasm_decoder_channel_count'),
+    openjoc_wasm_decoder_renderer: requireFunction(raw, 'openjoc_wasm_decoder_renderer'),
+    openjoc_wasm_decoder_latency_samples: requireFunction(raw, 'openjoc_wasm_decoder_latency_samples'),
     openjoc_wasm_decoder_queued_audio_ms: requireFunction(raw, 'openjoc_wasm_decoder_queued_audio_ms'),
     openjoc_wasm_decoder_decoded_access_units: requireFunction(raw, 'openjoc_wasm_decoder_decoded_access_units'),
     openjoc_wasm_decoder_output_frames: requireFunction(raw, 'openjoc_wasm_decoder_output_frames'),
@@ -172,6 +189,9 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
     openjoc_wasm_decoder_render_mean_ms: requireFunction(raw, 'openjoc_wasm_decoder_render_mean_ms'),
     openjoc_wasm_decoder_render_p95_ms: requireFunction(raw, 'openjoc_wasm_decoder_render_p95_ms'),
     openjoc_wasm_decoder_render_max_ms: requireFunction(raw, 'openjoc_wasm_decoder_render_max_ms'),
+    openjoc_wasm_decoder_binaural_mean_ms: requireFunction(raw, 'openjoc_wasm_decoder_binaural_mean_ms'),
+    openjoc_wasm_decoder_binaural_p95_ms: requireFunction(raw, 'openjoc_wasm_decoder_binaural_p95_ms'),
+    openjoc_wasm_decoder_binaural_max_ms: requireFunction(raw, 'openjoc_wasm_decoder_binaural_max_ms'),
     openjoc_wasm_decoder_total_mean_ms: requireFunction(raw, 'openjoc_wasm_decoder_total_mean_ms'),
     openjoc_wasm_decoder_total_p95_ms: requireFunction(raw, 'openjoc_wasm_decoder_total_p95_ms'),
     openjoc_wasm_decoder_total_max_ms: requireFunction(raw, 'openjoc_wasm_decoder_total_max_ms'),
@@ -198,7 +218,8 @@ export class WasmDecoderClient {
   public constructor(instance: WebAssembly.Instance, options: WasmDecoderOptions = {}) {
     this.exports_ = createExports(instance);
     const mode = options.dialnormMode === 'unity' ? 1 : 0;
-    this.handle = this.exports_.openjoc_wasm_decoder_create_with_dialnorm(mode);
+    const renderer = options.renderer === 'binaural' ? 1 : 0;
+    this.handle = this.exports_.openjoc_wasm_decoder_create_with_renderer(mode, renderer);
     if (this.handle === 0) {
       throw new Error('failed to create OpenJOC WASM decoder');
     }
@@ -289,7 +310,15 @@ export class WasmDecoderClient {
   public status(): WasmDecoderSnapshot {
     this.assertAlive();
     this.recordMemory();
+    const renderer = this.exports_.openjoc_wasm_decoder_renderer(this.handle);
+    if (renderer !== 0 && renderer !== 1) {
+      throw new Error(`unknown OpenJOC WASM renderer: ${renderer}`);
+    }
     return {
+      renderer: renderer === 1 ? 'binaural' : 'stereo',
+      virtualLayout: renderer === 1 ? '7.1.4' : null,
+      hrtf: renderer === 1 ? 'Built-in SADIE II D1' : null,
+      latencySamples: this.exports_.openjoc_wasm_decoder_latency_samples(this.handle),
       sampleRate: this.optionalSampleRate(this.exports_.openjoc_wasm_decoder_sample_rate(this.handle)),
       outputChannels: this.exports_.openjoc_wasm_decoder_channel_count(this.handle),
       queuedAudioMs: this.exports_.openjoc_wasm_decoder_queued_audio_ms(this.handle),
@@ -304,6 +333,9 @@ export class WasmDecoderClient {
       renderMeanMs: this.exports_.openjoc_wasm_decoder_render_mean_ms(this.handle),
       renderP95Ms: this.exports_.openjoc_wasm_decoder_render_p95_ms(this.handle),
       renderMaxMs: this.exports_.openjoc_wasm_decoder_render_max_ms(this.handle),
+      binauralMeanMs: this.exports_.openjoc_wasm_decoder_binaural_mean_ms(this.handle),
+      binauralP95Ms: this.exports_.openjoc_wasm_decoder_binaural_p95_ms(this.handle),
+      binauralMaxMs: this.exports_.openjoc_wasm_decoder_binaural_max_ms(this.handle),
       totalMeanMs: this.exports_.openjoc_wasm_decoder_total_mean_ms(this.handle),
       totalP95Ms: this.exports_.openjoc_wasm_decoder_total_p95_ms(this.handle),
       totalMaxMs: this.exports_.openjoc_wasm_decoder_total_max_ms(this.handle),

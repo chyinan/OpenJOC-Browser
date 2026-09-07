@@ -5,13 +5,14 @@ import {isCurrentGeneration} from './generation.js';
 import {DecoderGenerationSlot} from './decoder-generation.js';
 import {MAX_CMAF_DECODE_QUEUE_MS, shouldWaitForCmafAudioBudget} from './decode-backpressure.js';
 import {MAX_INPUT_FILE_BYTES, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
+import {type RendererMode} from './extension-protocol.js';
 
 const workerScope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 const CHUNK_BYTES = 64 * 1024;
 const MAX_DECODE_QUEUE_MS = 1_000;
 
 const decoderSlot = new DecoderGenerationSlot<WasmDecoderClient>(
-  async (): Promise<WasmDecoderClient> => loadOpenJocWasm(new URL('./wasm/openjoc_wasm.wasm', import.meta.url), {dialnormMode}),
+  async (): Promise<WasmDecoderClient> => loadOpenJocWasm(new URL('./wasm/openjoc_wasm.wasm', import.meta.url), {dialnormMode, renderer: rendererMode}),
   (decoder): void => decoder.destroy(),
 );
 let isPaused = false;
@@ -20,8 +21,9 @@ let generation = 0;
 let pcmSequence = 0;
 let acceptedSequence = 0;
 let wakeResolver: (() => void) | null = null;
-let decoderMode: 'raw' | 'cmaf-calibrated' | 'cmaf-unity' | null = null;
+let decoderMode: string | null = null;
 let dialnormMode: 'calibrated' | 'unity' = 'calibrated';
+let rendererMode: RendererMode = 'stereo';
 let cmafCommandTail: Promise<void> = Promise.resolve();
 
 function postMessage(message: WorkerMessage, transfer: Array<ArrayBuffer> = []): void {
@@ -94,7 +96,7 @@ async function postAvailablePcm(currentGeneration: number): Promise<void> {
     if (!(await waitForPcmAcceptance(sequence, currentGeneration))) {
       return;
     }
-    if (decoderMode === 'cmaf-calibrated' || decoderMode === 'cmaf-unity') {
+    if (decoderMode?.startsWith('cmaf-') === true) {
       await waitForCmafPlaybackBudget();
     } else {
       await waitForPlaybackBudget();
@@ -168,7 +170,7 @@ async function decodeBytes(bytes: ArrayBuffer, currentGeneration: number): Promi
   }
 }
 
-async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number): Promise<void> {
+async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, requestedRenderer: RendererMode): Promise<void> {
   if (bytes.byteLength > MAX_INPUT_FILE_BYTES) {
     throw new Error(`input file exceeds the ${MAX_INPUT_FILE_BYTES} byte Phase-0 limit`);
   }
@@ -178,6 +180,8 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number): Pr
   generation = requestedGeneration;
   const currentGeneration = generation;
   try {
+    dialnormMode = 'calibrated';
+    rendererMode = requestedRenderer;
     const loadedDecoder = await decoderSlot.start(currentGeneration);
     if (!isCurrentGeneration(currentGeneration, generation) || loadedDecoder === null) {
       return;
@@ -187,7 +191,6 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number): Pr
     pcmSequence = 0;
     acceptedSequence = 0;
     decoderMode = 'raw';
-    dialnormMode = 'calibrated';
     postDecoderStatus();
     await decodeBytes(bytes, currentGeneration);
   } finally {
@@ -195,12 +198,13 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number): Pr
   }
 }
 
-async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: 'calibrated' | 'unity'): Promise<boolean> {
-  const requestedMode = requestedDialnorm === 'unity' ? 'cmaf-unity' : 'cmaf-calibrated';
+async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: 'calibrated' | 'unity', requestedRenderer: RendererMode): Promise<boolean> {
+  const requestedMode = `cmaf-${requestedRenderer}-${requestedDialnorm}`;
   if (decoderMode === requestedMode && decoderSlot.current() !== null) {
     return isCurrentGeneration(currentGeneration, generation);
   }
   dialnormMode = requestedDialnorm;
+  rendererMode = requestedRenderer;
   const loadedDecoder = await decoderSlot.start(currentGeneration);
   if (!isCurrentGeneration(currentGeneration, generation) || loadedDecoder === null) {
     return false;
@@ -224,7 +228,7 @@ async function handleCmafSample(command: Extract<WorkerCommand, {type: 'decode-c
   if (command.generation < generation) return;
   generation = Math.max(generation, command.generation);
   const currentGeneration = command.generation;
-  if (!(await ensureCmafDecoder(currentGeneration, command.dialnorm))) return;
+  if (!(await ensureCmafDecoder(currentGeneration, command.dialnorm, command.renderer))) return;
   await waitForCmafPlaybackBudget();
   if (!isCurrentGeneration(currentGeneration, generation)) return;
   const status = requireDecoder().pushPacket(new Uint8Array(command.bytes), {
@@ -240,7 +244,7 @@ async function handleCmafSample(command: Extract<WorkerCommand, {type: 'decode-c
 }
 
 async function handleCmafEnd(command: Extract<WorkerCommand, {type: 'end-cmaf'}>): Promise<void> {
-  if (command.generation !== generation || (decoderMode !== 'cmaf-calibrated' && decoderMode !== 'cmaf-unity')) return;
+  if (command.generation !== generation || decoderMode?.startsWith('cmaf-') !== true) return;
   const currentGeneration = command.generation;
   while (isCurrentGeneration(currentGeneration, generation)) {
     await waitForCmafPlaybackBudget();
@@ -259,7 +263,7 @@ async function handleCmafEnd(command: Extract<WorkerCommand, {type: 'end-cmaf'}>
 async function handleCommand(command: WorkerCommand): Promise<void> {
   switch (command.type) {
       case 'decode':
-        await handleDecode(command.bytes, command.generation);
+        await handleDecode(command.bytes, command.generation, command.renderer ?? 'stereo');
         return;
       case 'decode-cmaf-sample':
         await handleCmafSample(command);

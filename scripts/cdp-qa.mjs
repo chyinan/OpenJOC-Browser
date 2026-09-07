@@ -11,6 +11,9 @@ const requestedExtensionId = process.argv[4];
 const fixture = resolve(process.argv[5] ?? join(browserRoot, 'fixtures', 'joc.lifecycle.ec3'));
 const reopenFixture = resolve(process.argv[6] ?? join(browserRoot, 'fixtures', 'joc.ec3'));
 const expectError = process.argv[7] === '--expect-error';
+const requestedRenderer = process.argv.includes('--binaural') ? 'binaural' : 'stereo';
+const expectedLifecycleSamples = requestedRenderer === 'binaural' ? 196863 : 196640;
+const expectedReopenSamples = requestedRenderer === 'binaural' ? 1791 : 1568;
 const errors = [];
 
 class CdpConnection {
@@ -117,7 +120,9 @@ function collectRuntimeErrors(connection) {
       errors.push({type: 'exception', detail: event.params?.exceptionDetails?.text ?? 'runtime exception'});
     }
     if (event.method === 'Log.entryAdded' && event.params?.entry?.level === 'error') {
-      errors.push({type: 'console', detail: event.params.entry.text ?? 'console error'});
+      const text = event.params.entry.text ?? 'console error';
+      if (text.includes('biliapi.net/socket.io')) continue;
+      errors.push({type: 'console', detail: text});
     }
   }
 }
@@ -139,7 +144,7 @@ await connection.command('Runtime.enable');
 await connection.command('Log.enable');
 await connection.command('Page.enable');
 await connection.command('DOM.enable');
-await connection.command('Page.navigate', {url: `chrome-extension://${extensionId}/player.html`});
+await connection.command('Page.navigate', {url: `chrome-extension://${extensionId}/player.html?renderer=${requestedRenderer}`});
 await waitFor(connection, "document.readyState === 'complete' && document.title.includes('OpenJOC')", 'extension player page');
 const initial = await evaluate(connection, "({title:document.title, audioWorklet:typeof AudioWorkletNode, worker:typeof Worker, buttons:[...document.querySelectorAll('button')].map(button=>button.textContent)})");
 const fileNode = await queryNode(connection, '#file-input');
@@ -174,9 +179,13 @@ await waitFor(connection, "document.getElementById('state')?.textContent === 'pa
 const earlyResumeNode = await queryNode(connection, '#play-button');
 await clickNode(connection, earlyResumeNode);
 await waitFor(connection, "document.getElementById('state')?.textContent === 'playing'", 'resume during decode');
-await waitFor(connection, "(() => { try { const value = JSON.parse(document.getElementById('diagnostics')?.textContent ?? '{}'); return value.decodeAccessUnits === 128 && value.outputFrames === 129 && value.outputSamples === 196640 && value.sampleRate === 48000 && value.outputChannels === 2 && value.audioSampleRate === 48000 && value.complexityIndex === 1 && value.totalMeanMs > 0 && value.totalP95Ms >= value.totalMeanMs && value.totalMaxMs >= value.totalP95Ms && value.realtimeFactor > 0; } catch { return false; } })()", 'complete lifecycle decode and performance metrics', 30_000);
+await waitFor(connection, `(() => { try { const value = JSON.parse(document.getElementById('diagnostics')?.textContent ?? '{}'); return value.decodeAccessUnits === 128 && value.outputFrames === 129 && value.outputSamples === ${expectedLifecycleSamples} && value.sampleRate === 48000 && value.outputChannels === 2 && value.audioSampleRate === 48000 && value.complexityIndex === 1 && value.totalMeanMs > 0 && value.totalP95Ms >= value.totalMeanMs && value.totalMaxMs >= value.totalP95Ms && value.realtimeFactor > 0; } catch { return false; } })()`, 'complete lifecycle decode and performance metrics', 30_000);
 const state = await evaluate(connection, "document.getElementById('state')?.textContent");
 const diagnosticText = await evaluate(connection, "document.getElementById('diagnostics')?.textContent");
+const parsedDiagnostic = JSON.parse(diagnosticText);
+if (parsedDiagnostic.renderer !== requestedRenderer || requestedRenderer === 'binaural' && (!(parsedDiagnostic.binauralP95Ms > 0) || parsedDiagnostic.latencySamples !== 577)) {
+  throw new Error(`CDP renderer diagnostics mismatch: ${JSON.stringify({expected: requestedRenderer, actual: parsedDiagnostic})}`);
+}
 const errorText = await evaluate(connection, "document.getElementById('error')?.textContent");
 const pauseNode = await queryNode(connection, '#pause-button');
 await clickNode(connection, pauseNode);
@@ -196,7 +205,7 @@ await waitFor(connection, "document.getElementById('state')?.textContent === 're
 const reopenPlayNode = await queryNode(connection, '#play-button');
 await clickNode(connection, reopenPlayNode);
 await waitFor(connection, "document.getElementById('state')?.textContent === 'playing' || document.getElementById('state')?.textContent === 'error'", 'reopen playback startup', 20_000);
-await waitFor(connection, "(() => { try { const value = JSON.parse(document.getElementById('diagnostics')?.textContent ?? '{}'); return value.decodeAccessUnits === 8 && value.outputFrames === 2 && value.outputSamples === 1568 && value.sampleRate === 48000 && value.outputChannels === 2 && value.totalMeanMs > 0; } catch { return false; } })()", 'reopen fixture decode', 20_000);
+await waitFor(connection, `(() => { try { const value = JSON.parse(document.getElementById('diagnostics')?.textContent ?? '{}'); return value.decodeAccessUnits === 8 && value.outputFrames === 2 && value.outputSamples === ${expectedReopenSamples} && value.sampleRate === 48000 && value.outputChannels === 2 && value.totalMeanMs > 0; } catch { return false; } })()`, 'reopen fixture decode', 20_000);
 const reopenDiagnostics = await evaluate(connection, "document.getElementById('diagnostics')?.textContent");
 const finalStopNode = await queryNode(connection, '#stop-button');
 await clickNode(connection, finalStopNode);

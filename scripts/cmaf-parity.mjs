@@ -8,6 +8,8 @@ const SAMPLE_BYTES = 4_096;
 const SAMPLE_DURATION = 1_536;
 const fixture = readFileSync('fixtures/joc.lifecycle.ec3');
 const wasmBytes = readFileSync('extension/wasm/openjoc_wasm.wasm');
+const renderer = process.argv.includes('--binaural') ? 'binaural' : 'stereo';
+const dialnorm = process.argv.includes('--unity') ? 'unity' : 'calibrated';
 
 function u32(value) {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
@@ -50,7 +52,7 @@ function makeFragment(sample, ptsSamples) {
 
 async function createDecoder() {
   const {instance} = await WebAssembly.instantiate(wasmBytes, {env: {openjoc_wasm_clock_now_ms: () => performance.now()}});
-  return new WasmDecoderClient(instance);
+  return new WasmDecoderClient(instance, {renderer, dialnormMode: dialnorm});
 }
 
 function collectPcm(decoder, output) {
@@ -100,8 +102,8 @@ const cmaf = await decodeCmaf();
 if (!raw.pcm.equals(cmaf.pcm)) {
   throw new Error(`RAW_VS_CMAF_PCM differs at byte ${raw.pcm.findIndex((value, index) => value !== cmaf.pcm[index])}`);
 }
-for (const key of ['sampleRate', 'outputChannels', 'decodedAccessUnits', 'outputFrames', 'outputSamples', 'profile', 'downmixIndex', 'objectCount', 'complexityIndex']) {
+for (const key of ['renderer', 'virtualLayout', 'hrtf', 'latencySamples', 'sampleRate', 'outputChannels', 'decodedAccessUnits', 'outputFrames', 'outputSamples', 'profile', 'downmixIndex', 'objectCount', 'complexityIndex']) {
   if (raw.status[key] !== cmaf.status[key]) throw new Error(`RAW_VS_CMAF metadata mismatch: ${key}`);
 }
-console.log(`RAW_VS_CMAF_PCM=BIT_IDENTICAL bytes=${raw.pcm.length}`);
+console.log(`RAW_VS_CMAF_PCM=BIT_IDENTICAL renderer=${renderer} dialnorm=${dialnorm} bytes=${raw.pcm.length}`);
 console.log(`CMAF access_units=${cmaf.status.decodedAccessUnits} frames=${cmaf.status.outputFrames} samples=${cmaf.status.outputSamples} sample_rate=${cmaf.status.sampleRate} channels=${cmaf.status.outputChannels}`);

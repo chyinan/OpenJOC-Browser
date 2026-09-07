@@ -91,9 +91,8 @@ async function fetchRange(
     timedOut = true;
     requestController.abort();
   }, RANGE_TIMEOUT_MS);
-  let response: Response;
   try {
-    response = await fetchImpl(options.url, {
+    const response = await fetchImpl(options.url, {
       method: 'GET',
       credentials: 'include',
       headers: {Range: `bytes=${start}-${end}`},
@@ -101,6 +100,18 @@ async function fetchRange(
       referrerPolicy: 'no-referrer-when-downgrade',
       signal: requestController.signal,
     });
+    if (response.status !== 206) {
+      throw new Error(`Bilibili CMAF range request returned status ${response.status} for bytes ${start}-${end}`);
+    }
+    const contentRange = parseContentRange(response.headers.get('content-range'));
+    if (contentRange === null || contentRange.start !== start || contentRange.end < start || contentRange.end > end) {
+      throw new Error('Bilibili CMAF range response is invalid');
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length !== contentRange.end - contentRange.start + 1) {
+      throw new Error('Bilibili CMAF range length does not match Content-Range');
+    }
+    return {bytes, totalBytes: contentRange.total};
   } catch (error: unknown) {
     if (timedOut && !signal.aborted) throw new Error(`Bilibili CMAF range request timed out for bytes ${start}-${end}`);
     throw error;
@@ -108,18 +119,6 @@ async function fetchRange(
     globalThis.clearTimeout(timeoutId);
     signal.removeEventListener('abort', abortFromCaller);
   }
-  if (response.status !== 206) {
-    throw new Error(`Bilibili CMAF range request returned status ${response.status} for bytes ${start}-${end}`);
-  }
-  const contentRange = parseContentRange(response.headers.get('content-range'));
-  if (contentRange === null || contentRange.start !== start || contentRange.end < start || contentRange.end > end) {
-    throw new Error('Bilibili CMAF range response is invalid');
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.length !== contentRange.end - contentRange.start + 1) {
-    throw new Error('Bilibili CMAF range length does not match Content-Range');
-  }
-  return {bytes, totalBytes: contentRange.total};
 }
 
 function parseContentRange(value: string | null): Readonly<{start: number; end: number; total: number}> | null {

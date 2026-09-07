@@ -3,12 +3,14 @@
 import {fetchCmafIndex, fetchCmafSegment, type CmafIndexSession} from './cmaf-fetcher.js';
 import {parseCmafFragment, type CmafSample, type CmafSegmentReference} from './cmaf-transport.js';
 import {selectCmafSegmentWindow} from './cmaf-window.js';
-import {isRuntimeMessage, type PlaybackMetrics, type RuntimeMessage} from './extension-protocol.js';
+import {isRuntimeMessage, type MediaKey, type PlaybackMetrics, type RuntimeMessage} from './extension-protocol.js';
 import {sanitizeMediaUrl} from './media-url-policy.js';
 import {createDriftMetrics, recordDriftSample, resumeAudioPhase, type DriftMetrics} from './sync-state.js';
-import {advanceDecoderProgressWatchdog, createDecoderProgressWatchdog, type DecoderProgressWatchdog} from './decode-progress.js';
+import {advanceDecoderProgressWatchdog, createDecoderProgressWatchdog, hasDecoderMadeProgress, type DecoderProgressWatchdog} from './decode-progress.js';
 import {estimateMediaTimeSamples} from './video-clock-estimate.js';
 import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
+import {sessionTargetMatches, type MediaSessionTarget} from './media-session-policy.js';
+import {gainDbToAmplitude} from './output-gain.js';
 
 const SAMPLE_RATE = 48_000;
 const MAX_SEGMENTS_PER_WINDOW = 2;
@@ -22,6 +24,7 @@ type SessionStage = 'starting-audio' | 'starting-decoder' | 'fetching-index' | '
 
 type WorkletStats = Readonly<{
   readonly queuedAudioMs: number;
+  readonly averageDb: number | null;
   readonly underrunCount: number;
   readonly acceptedSequence: number;
   readonly currentAudioMediaSamples: number | null;
@@ -43,7 +46,11 @@ type OutputClock = Readonly<{
 
 type Session = {
   readonly request: Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>;
+  readonly audioGeneration: number;
   readonly abort: AbortController;
+  gainDb: number;
+  playerVolume: number;
+  playerMuted: boolean;
   index: CmafIndexSession | null;
   nextReferenceIndex: number;
   windowEndSamples: number;
@@ -57,10 +64,12 @@ type Session = {
   preparationTimer: number | null;
 };
 
+type StartRequest = Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>;
+type PendingStart = {readonly token: number; readonly request: StartRequest; gainDb: number};
+
 type PendingProgress = {
   readonly session: Session;
-  readonly generation: number;
-  readonly accessUnits: number;
+  readonly previousAccessUnits: number;
   readonly resolve: () => void;
   readonly reject: (error: Error) => void;
   timeoutId: number | null;
@@ -68,6 +77,8 @@ type PendingProgress = {
 };
 
 let worker: Worker | null = null;
+// Page generations restart on navigation; the persistent audio graph must never roll back.
+let lastAudioGeneration = 0;
 let audioContext: AudioContext | null = null;
 let audioNode: AudioWorkletNode | null = null;
 let silentKeepAlive: ConstantSourceNode | null = null;
@@ -75,6 +86,7 @@ let currentSession: Session | null = null;
 let latestDecoderStatus: DecoderWorkerStatus | null = null;
 let latestWorkletStats: WorkletStats = {
   queuedAudioMs: 0,
+  averageDb: null,
   underrunCount: 0,
   acceptedSequence: 0,
   currentAudioMediaSamples: null,
@@ -93,6 +105,9 @@ let driftMetrics: DriftMetrics = createDriftMetrics();
 let outputClock: OutputClock = {contextTime: null, performanceTime: null, baseLatencyMs: null, outputLatencyMs: null};
 let pendingProgress: Array<PendingProgress> = [];
 let pageRangeRequestSequence = 0;
+let latestStartToken = 0;
+let startOperationTail: Promise<void> = Promise.resolve();
+let pendingStart: PendingStart | null = null;
 const pendingPageRanges = new Map<string, Readonly<{generation: number; resolve(response: PageRangeResponse): void; reject(error: Error): void}>>();
 
 type PageRangeResponse = Readonly<{readonly status: number; readonly contentRange: string | null; readonly error: string | null; readonly buffer: ArrayBuffer}>;
@@ -109,7 +124,7 @@ function base64ToArrayBuffer(value: string): ArrayBuffer {
 }
 
 function isWorkletStats(value: unknown): value is WorkletStats & {readonly type: 'stats'; readonly generation: number} {
-  return isRecord(value) && value.type === 'stats' && typeof value.generation === 'number' && typeof value.queuedAudioMs === 'number' && typeof value.underrunCount === 'number' && typeof value.acceptedSequence === 'number' && (value.currentAudioMediaSamples === null || typeof value.currentAudioMediaSamples === 'number') && (value.driftMs === null || typeof value.driftMs === 'number') && typeof value.resyncCount === 'number' && typeof value.processGapMaxMs === 'number' && typeof value.processGapOver20MsCount === 'number' && typeof value.playedQuantumCount === 'number' && typeof value.silentQuantumCount === 'number' && (value.lastTimestampedReadType === null || typeof value.lastTimestampedReadType === 'string');
+  return isRecord(value) && value.type === 'stats' && typeof value.generation === 'number' && typeof value.queuedAudioMs === 'number' && (value.averageDb === null || (typeof value.averageDb === 'number' && Number.isFinite(value.averageDb))) && typeof value.underrunCount === 'number' && typeof value.acceptedSequence === 'number' && (value.currentAudioMediaSamples === null || typeof value.currentAudioMediaSamples === 'number') && (value.driftMs === null || typeof value.driftMs === 'number') && typeof value.resyncCount === 'number' && typeof value.processGapMaxMs === 'number' && typeof value.processGapOver20MsCount === 'number' && typeof value.playedQuantumCount === 'number' && typeof value.silentQuantumCount === 'number' && (value.lastTimestampedReadType === null || typeof value.lastTimestampedReadType === 'string');
 }
 
 function isCurrentSession(session: Session): boolean {
@@ -128,6 +143,12 @@ function sendStatus(
   const currentAudio = latestWorkletStats.currentAudioMediaSamples;
   const metrics: PlaybackMetrics = {
     stage: session.stage,
+    renderer: decoder?.renderer ?? session.request.renderer,
+    virtualLayout: decoder?.virtualLayout ?? (session.request.renderer === 'binaural' ? '7.1.4' : null),
+    hrtf: decoder?.hrtf ?? (session.request.renderer === 'binaural' ? 'Built-in SADIE II D1' : null),
+    binauralLatencyMs: decoder?.renderer === 'binaural' ? decoder.latencySamples * 1000 / SAMPLE_RATE : null,
+    binauralP95Ms: decoder?.renderer === 'binaural' ? decoder.binauralP95Ms : null,
+    binauralMaxMs: decoder?.renderer === 'binaural' ? decoder.binauralMaxMs : null,
     currentVideoMediaTime: currentVideo / SAMPLE_RATE,
     currentAudioMediaTime: currentAudio === null ? null : currentAudio / SAMPLE_RATE,
     driftMs: latestWorkletStats.driftMs,
@@ -137,6 +158,7 @@ function sendStatus(
     resyncCount: latestWorkletStats.resyncCount,
     compressedBufferMs: Math.max(0, (session.windowEndSamples - currentVideo) * 1000 / SAMPLE_RATE),
     pcmBufferMs: latestWorkletStats.queuedAudioMs,
+    averageDb: latestWorkletStats.averageDb,
     underrunCount: latestWorkletStats.underrunCount,
     decodeMeanMs: decoder?.decodeMeanMs ?? 0,
     decodeP95Ms: decoder?.decodeP95Ms ?? 0,
@@ -157,7 +179,7 @@ function sendStatus(
     workletSilentQuantumCount: latestWorkletStats.silentQuantumCount,
     workletLastReadType: latestWorkletStats.lastTimestampedReadType,
   };
-  const message: RuntimeMessage = {target: 'background', type: 'offscreen-status', tabId: session.request.tabId, generation: session.request.generation, phase, reason, inbandJocConfirmed: session.isJocConfirmed, profile: decoder?.profile ?? null, metrics};
+  const message: RuntimeMessage = {target: 'background', type: 'offscreen-status', requestId: session.request.requestId, tabId: session.request.tabId, mediaKey: session.request.mediaKey, generation: session.request.generation, phase, reason, inbandJocConfirmed: session.isJocConfirmed, profile: decoder?.profile ?? null, metrics};
   chrome.runtime.sendMessage(message).catch(() => undefined);
 }
 
@@ -180,7 +202,7 @@ async function ensureAudio(): Promise<AudioContext> {
     await nextContext.audioWorklet.addModule(new URL('./pcm-processor.js', import.meta.url));
     const nextNode = new AudioWorkletNode(nextContext, 'openjoc-pcm', {numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2]});
     nextNode.port.onmessage = (event: MessageEvent<unknown>): void => {
-      if (isWorkletStats(event.data) && currentSession !== null && event.data.generation === currentSession.request.generation) {
+      if (isWorkletStats(event.data) && currentSession !== null && event.data.generation === currentSession.audioGeneration) {
         latestWorkletStats = event.data;
         worker?.postMessage({type: 'queue-stats', generation: event.data.generation, queuedAudioMs: event.data.queuedAudioMs, acceptedSequence: event.data.acceptedSequence} satisfies WorkerCommand);
         if (event.data.driftMs !== null) driftMetrics = recordDriftSample(driftMetrics, event.data.driftMs);
@@ -222,9 +244,20 @@ function resetAudio(generation: number): void {
   audioNode?.port.postMessage({type: 'reset', generation});
   latestDecoderStatus = null;
   driftMetrics = createDriftMetrics();
-  latestWorkletStats = {queuedAudioMs: 0, underrunCount: 0, acceptedSequence: 0, currentAudioMediaSamples: null, driftMs: null, resyncCount: 0, processGapMaxMs: 0, processGapOver20MsCount: 0, playedQuantumCount: 0, silentQuantumCount: 0, lastTimestampedReadType: null};
+  latestWorkletStats = {queuedAudioMs: 0, averageDb: null, underrunCount: 0, acceptedSequence: 0, currentAudioMediaSamples: null, driftMs: null, resyncCount: 0, processGapMaxMs: 0, processGapOver20MsCount: 0, playedQuantumCount: 0, silentQuantumCount: 0, lastTimestampedReadType: null};
   pendingProgress.forEach((pending) => pending.reject(new Error('OpenJOC playback generation reset')));
   pendingProgress = [];
+}
+
+function applyOutputGain(session: Session, immediate = false): void {
+  if (!isCurrentSession(session) || audioNode === null || audioContext === null) return;
+  const gain = audioNode.parameters.get('outputGain');
+  if (gain === undefined) throw new Error('OpenJOC output gain parameter is unavailable');
+  const now = audioContext.currentTime;
+  const amplitude = session.playerMuted ? 0 : session.playerVolume * gainDbToAmplitude(session.gainDb);
+  gain.cancelAndHoldAtTime(now);
+  if (immediate) gain.setValueAtTime(amplitude, now);
+  else gain.setTargetAtTime(amplitude, now, 0.015);
 }
 
 function isProgressWatchdogPaused(session: Session): boolean {
@@ -267,8 +300,8 @@ function updateDecoderProgressWatchdogs(session: Session): void {
   }
 }
 
-function waitForDecoderProgress(session: Session, accessUnits: number): Promise<void> {
-  if (latestDecoderStatus !== null && latestDecoderStatus.decodedAccessUnits >= accessUnits) return Promise.resolve();
+function waitForDecoderProgress(session: Session, previousAccessUnits: number): Promise<void> {
+  if (latestDecoderStatus !== null && hasDecoderMadeProgress(previousAccessUnits, latestDecoderStatus.decodedAccessUnits)) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     const finish = (callback: () => void): void => {
@@ -279,12 +312,11 @@ function waitForDecoderProgress(session: Session, accessUnits: number): Promise<
     };
     const pending: PendingProgress = {
       session,
-      generation: session.request.generation,
-      accessUnits,
+      previousAccessUnits,
       resolve: () => finish(resolve),
       reject: (error: Error) => finish(() => reject(error)),
       timeoutId: null,
-      watchdog: createDecoderProgressWatchdog({timeoutMs: DECODER_PROGRESS_TIMEOUT_MS, nowMs: performance.now()}),
+      watchdog: createDecoderProgressWatchdog({timeoutMs: DECODER_PROGRESS_TIMEOUT_MS, nowMs: performance.now(), isPaused: isProgressWatchdogPaused(session)}),
     };
     pendingProgress.push(pending);
     scheduleDecoderProgressTimeout(pending);
@@ -292,14 +324,14 @@ function waitForDecoderProgress(session: Session, accessUnits: number): Promise<
 }
 
 function resolveDecoderProgress(status: DecoderWorkerStatus): void {
-  const ready = pendingProgress.filter((pending) => pending.generation === currentSession?.request.generation && status.decodedAccessUnits >= pending.accessUnits);
+  const ready = pendingProgress.filter((pending) => pending.session === currentSession && hasDecoderMadeProgress(pending.previousAccessUnits, status.decodedAccessUnits));
   pendingProgress = pendingProgress.filter((pending) => !ready.includes(pending));
   ready.forEach((pending) => pending.resolve());
 }
 
 function handleWorkerMessage(message: WorkerMessage): void {
   const session = currentSession;
-  if (session === null || message.generation !== session.request.generation) return;
+  if (session === null || message.generation !== session.audioGeneration) return;
   if (message.type === 'pcm') {
     if (audioNode === null || message.ptsSamples === null) {
       void failSession('OpenJOC did not return a timestamped CMAF PCM block');
@@ -337,7 +369,7 @@ async function pumpSegments(session: Session): Promise<void> {
   if (!isCurrentSession(session) || session.index === null || session.isStreaming) return;
   const references = session.index.index.references.slice(session.nextReferenceIndex, session.nextReferenceIndex + MAX_SEGMENTS_PER_WINDOW);
   if (references.length === 0) {
-    ensureWorker().postMessage({type: 'end-cmaf', generation: session.request.generation} satisfies WorkerCommand);
+    ensureWorker().postMessage({type: 'end-cmaf', generation: session.audioGeneration} satisfies WorkerCommand);
     return;
   }
   const decoderWorker = ensureWorker();
@@ -348,16 +380,15 @@ async function pumpSegments(session: Session): Promise<void> {
       if (!isCurrentSession(session)) return;
       session.stage = 'fetching-segment';
       const samples = await fetchSegmentWithPageFallback(session.index, reference, session.abort.signal, session.request.tabId, session.request.generation);
-      let accessUnits = latestDecoderStatus?.decodedAccessUnits ?? 0;
+      const previousAccessUnits = latestDecoderStatus?.decodedAccessUnits ?? 0;
       for (const sample of samples) {
         if (!isCurrentSession(session)) return;
         session.stage = 'decoding';
         const buffer = sample.bytes.slice().buffer;
-        decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.request.generation, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm} satisfies WorkerCommand, [buffer]);
+        decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.audioGeneration, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm, renderer: session.request.renderer} satisfies WorkerCommand, [buffer]);
         firstSample = false;
-        accessUnits += 1;
-        await waitForDecoderProgress(session, accessUnits);
       }
+      await waitForDecoderProgress(session, previousAccessUnits);
       session.nextReferenceIndex += 1;
       session.windowEndSamples = Math.max(session.windowEndSamples, reference.ptsSamples + reference.durationSamples);
     }
@@ -383,7 +414,7 @@ function pumpFromEstimatedVideoClock(): void {
   const elapsedMs = performance.now() - lastVideoClockAtMs;
   const estimatedVideo = estimateMediaTimeSamples(currentVideo, elapsedMs, lastVideoPlaybackRate);
   if (elapsedMs >= VIDEO_CLOCK_STALE_AFTER_MS) {
-    audioNode?.port.postMessage({type: 'clock', generation: session.request.generation, mediaTimeSamples: estimatedVideo, paused: false, buffering: false});
+    audioNode?.port.postMessage({type: 'clock', generation: session.audioGeneration, mediaTimeSamples: estimatedVideo, paused: false, buffering: false});
   }
   if (session.index === null || session.isStreaming || session.nextReferenceIndex >= session.index.index.references.length) return;
   if (estimatedVideo + PUMP_THRESHOLD_SAMPLES >= session.windowEndSamples) void pumpSegments(session);
@@ -469,9 +500,10 @@ function validatePageRangeResponse(response: PageRangeResponse, start: number, e
   }
 }
 
-async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>): Promise<void> {
-  await stopSession(false);
-  const session: Session = {request, abort: new AbortController(), index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: false, isBuffering: false, phase: 'preparing', stage: 'starting-audio', preparationTimer: null};
+async function startSession(request: StartRequest, token: number): Promise<void> {
+  await stopSession(currentSession !== null && currentSession.request.tabId !== request.tabId);
+  if (token !== latestStartToken || pendingStart?.token !== token) return;
+  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: 1, playerMuted: false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: false, isBuffering: false, phase: 'preparing', stage: 'starting-audio', preparationTimer: null};
   currentSession = session;
   session.preparationTimer = window.setTimeout((): void => {
     if (isCurrentSession(session) && !session.isJocConfirmed) void failSession(`OpenJOC ${session.stage} timed out before JOC PCM became available`);
@@ -480,9 +512,11 @@ async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen
   lastVideoClockAtMs = performance.now();
   lastVideoPlaybackRate = 1;
   const context = await ensureAudio();
+  if (!isCurrentSession(session)) return;
   session.stage = 'starting-decoder';
   ensureWorker();
-  resetAudio(request.generation);
+  resetAudio(session.audioGeneration);
+  applyOutputGain(session, true);
   await context.resume();
   sendStatus('preparing', null, session);
   try {
@@ -503,6 +537,41 @@ async function startSession(request: Extract<RuntimeMessage, {target: 'offscreen
   }
 }
 
+function enqueueStartSession(request: StartRequest): void {
+  const token = latestStartToken + 1;
+  latestStartToken = token;
+  pendingStart = {token, request, gainDb: request.gainDb ?? 0};
+  // Release an obsolete startup's fetch before waiting for its serialized cleanup.
+  // A seek changes the page generation, so the old page-context range can no longer reply.
+  currentSession?.abort.abort();
+  startOperationTail = startOperationTail
+    .catch(() => undefined)
+    .then(async(): Promise<void> => {
+      if (token !== latestStartToken || pendingStart?.token !== token) return;
+      await startSession(request, token);
+    })
+    .catch((error: unknown): void => {
+      if (token !== latestStartToken) return;
+      void failSession(error instanceof Error ? error.message : 'failed to start OpenJOC Bilibili playback');
+    })
+    .finally((): void => {
+      if (pendingStart?.token === token) pendingStart = null;
+    });
+}
+
+function enqueueStopSession(announce: boolean, target: MediaSessionTarget): void {
+  const current = currentSession;
+  if (current !== null && sessionTargetMatches(sessionTarget(current), target)) current.abort.abort();
+  startOperationTail = startOperationTail
+    .catch(() => undefined)
+    .then(async(): Promise<void> => {
+      await stopSession(announce, target);
+    })
+    .catch((error: unknown): void => {
+      void failSession(error instanceof Error ? error.message : 'failed to stop OpenJOC Bilibili playback');
+    });
+}
+
 async function fetchSegmentWithPageFallback(session: CmafIndexSession, reference: CmafSegmentReference, signal: AbortSignal, tabId: number, generation: number): Promise<ReadonlyArray<CmafSample>> {
   try {
     return await fetchCmafSegment(session, reference, signal);
@@ -514,16 +583,28 @@ async function fetchSegmentWithPageFallback(session: CmafIndexSession, reference
   }
 }
 
-async function stopSession(announce: boolean): Promise<void> {
+async function stopSession(announce: boolean, target: MediaSessionTarget | null = null): Promise<void> {
   const session = currentSession;
   if (session === null) return;
+  if (target !== null && !sessionTargetMatches(sessionTarget(session), target)) return;
   session.abort.abort();
   if (session.preparationTimer !== null) window.clearTimeout(session.preparationTimer);
   session.preparationTimer = null;
   currentSession = null;
-  resetAudio(session.request.generation + 1);
+  resetAudio(++lastAudioGeneration);
   if (audioContext !== null) await audioContext.suspend();
   if (announce) sendStatus('disabled', null, session);
+}
+
+function sessionTarget(session: Session): MediaSessionTarget {
+  return {
+    mediaKey: `${session.request.mediaKey.bvid}:${session.request.mediaKey.aid}:${session.request.mediaKey.cid}`,
+    generation: session.request.generation,
+  };
+}
+
+function mediaKeyEquals(left: MediaKey, right: MediaKey): boolean {
+  return left.bvid === right.bvid && left.aid === right.aid && left.cid === right.cid;
 }
 
 async function failSession(reason: string): Promise<void> {
@@ -534,13 +615,13 @@ async function failSession(reason: string): Promise<void> {
   session.preparationTimer = null;
   sendStatus('error', reason, session);
   currentSession = null;
-  resetAudio(session.request.generation + 1);
+  resetAudio(++lastAudioGeneration);
   if (audioContext !== null) await audioContext.suspend();
 }
 
 function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type: 'clock'}>): void {
   const session = currentSession;
-  if (session === null || message.generation !== session.request.generation) return;
+  if (session === null || message.tabId !== session.request.tabId || message.generation !== session.request.generation) return;
   if (message.playbackRate !== 1) {
     void failSession('unsupported playback rate');
     return;
@@ -551,8 +632,8 @@ function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type
   session.isPaused = message.paused;
   session.isBuffering = message.buffering;
   updateDecoderProgressWatchdogs(session);
-  audioNode?.port.postMessage({type: 'clock', generation: message.generation, mediaTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
-  worker?.postMessage({type: message.paused || message.buffering ? 'pause' : 'resume', generation: message.generation} satisfies WorkerCommand);
+  audioNode?.port.postMessage({type: 'clock', generation: session.audioGeneration, mediaTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
+  worker?.postMessage({type: message.paused || message.buffering ? 'pause' : 'resume', generation: session.audioGeneration} satisfies WorkerCommand);
   if (message.paused || message.buffering) {
     session.phase = message.buffering ? 'buffering' : 'paused';
   } else {
@@ -567,16 +648,16 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown): void => {
   if (!isRuntimeMessage(rawMessage) || rawMessage.target !== 'offscreen') return;
   switch (rawMessage.type) {
     case 'start':
-      void startSession(rawMessage).catch((error: unknown) => failSession(error instanceof Error ? error.message : 'failed to start OpenJOC Bilibili playback'));
+      enqueueStartSession(rawMessage);
       return;
     case 'clock':
       handleClock(rawMessage);
       return;
     case 'native-muted': {
       const session = currentSession;
-      if (session === null || rawMessage.generation !== session.request.generation) return;
+      if (session === null || rawMessage.tabId !== session.request.tabId || rawMessage.generation !== session.request.generation) return;
       session.isNativeMuted = true;
-      audioNode?.port.postMessage({type: 'arm', generation: rawMessage.generation});
+      audioNode?.port.postMessage({type: 'arm', generation: session.audioGeneration});
       if (!session.isPaused && !session.isBuffering) {
         session.phase = 'active';
         if (audioContext !== null) void audioContext.resume();
@@ -584,13 +665,44 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown): void => {
       sendStatus(session.phase, null, session);
       return;
     }
+    case 'player-volume': {
+      const session = currentSession;
+      if (session === null || session.request.tabId !== rawMessage.tabId || session.request.requestId !== rawMessage.requestId || session.request.generation !== rawMessage.generation) return;
+      session.playerVolume = rawMessage.volume;
+      session.playerMuted = rawMessage.muted;
+      applyOutputGain(session, rawMessage.activate || rawMessage.muted || rawMessage.volume === 0);
+      if (rawMessage.activate && session.isJocConfirmed) {
+        session.isNativeMuted = true;
+        audioNode?.port.postMessage({type: 'arm', generation: session.audioGeneration});
+        if (!session.isPaused && !session.isBuffering) {
+          session.phase = 'active';
+          if (audioContext !== null) void audioContext.resume();
+        }
+        sendStatus(session.phase, null, session);
+      }
+      return;
+    }
     case 'disable':
-      if (currentSession?.request.tabId === rawMessage.tabId && currentSession.request.generation === rawMessage.generation) void stopSession(true);
+      if (currentSession === null) {
+        const pending = pendingStart;
+        if (pending !== null && pending.request.tabId === rawMessage.tabId && mediaKeyEquals(pending.request.mediaKey, rawMessage.mediaKey) && rawMessage.generation >= pending.request.generation) latestStartToken += 1;
+      } else if (currentSession.request.tabId === rawMessage.tabId && mediaKeyEquals(currentSession.request.mediaKey, rawMessage.mediaKey) && rawMessage.generation >= currentSession.request.generation) {
+        enqueueStopSession(true, sessionTarget(currentSession));
+      }
       return;
     case 'dialnorm': {
       const session = currentSession;
-      if (session === null) return;
-      void startSession({...session.request, dialnorm: rawMessage.mode, videoTimeSamples: latestVideoMediaSamples ?? session.request.videoTimeSamples});
+      if (session === null || rawMessage.tabId !== session.request.tabId || rawMessage.generation !== session.request.generation) return;
+      enqueueStartSession({...session.request, dialnorm: rawMessage.mode, gainDb: session.gainDb, videoTimeSamples: latestVideoMediaSamples ?? session.request.videoTimeSamples});
+      return;
+    }
+    case 'output-gain': {
+      const pending = pendingStart;
+      if (pending !== null && pending.request.tabId === rawMessage.tabId && pending.request.requestId === rawMessage.requestId && pending.request.generation === rawMessage.generation) pending.gainDb = rawMessage.gainDb;
+      const session = currentSession;
+      if (session === null || session.request.tabId !== rawMessage.tabId || session.request.requestId !== rawMessage.requestId || session.request.generation !== rawMessage.generation) return;
+      session.gainDb = rawMessage.gainDb;
+      applyOutputGain(session);
       return;
     }
     case 'page-media-range-response': {

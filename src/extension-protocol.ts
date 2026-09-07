@@ -1,5 +1,7 @@
 // pattern: Functional Core
 
+import {isOutputGainDb} from './output-gain.js';
+
 export type MediaKey = Readonly<{
   readonly bvid: string;
   readonly aid: string;
@@ -22,11 +24,20 @@ export type MainBridgeMessage =
 
 export type PlaybackPhase = 'disabled' | 'preparing' | 'ready' | 'active' | 'paused' | 'buffering' | 'error';
 
+export type RendererMode = 'stereo' | 'binaural';
+
 export type PlaybackMetrics = Readonly<{
   readonly stage: string;
+  readonly renderer: RendererMode;
+  readonly virtualLayout: '7.1.4' | null;
+  readonly hrtf: 'Built-in SADIE II D1' | null;
+  readonly binauralLatencyMs: number | null;
+  readonly binauralP95Ms: number | null;
+  readonly binauralMaxMs: number | null;
   readonly currentVideoMediaTime: number | null;
   readonly currentAudioMediaTime: number | null;
   readonly driftMs: number | null;
+  readonly averageDb: number | null;
   readonly driftP50Ms: number | null;
   readonly driftP95Ms: number | null;
   readonly driftMaxMs: number | null;
@@ -56,24 +67,36 @@ export type PlaybackMetrics = Readonly<{
 
 export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'toggle'}>
-  | Readonly<{target: 'background'; type: 'request-session'}>
+  | Readonly<{target: 'background'; type: 'document-active'}>
+  | Readonly<{target: 'background'; type: 'request-session'; force?: boolean; requestId?: string; generation?: number}>
   | Readonly<{target: 'background'; type: 'request-manifest'; pageUrl: string}>
   | Readonly<{target: 'background'; type: 'page-media-range-request'; tabId: number; generation: number; requestId: string; url: string; start: number; end: number}>
   | Readonly<{target: 'background'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; bufferBase64: string}>
-  | Readonly<{target: 'background'; type: 'start'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'}>
-  | Readonly<{target: 'background'; type: 'manifest'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>}>
-  | Readonly<{target: 'background'; type: 'session-heartbeat'; pageUrl: string; mediaKey: MediaKey; generation: number}>
-  | Readonly<{target: 'background'; type: 'video-clock'; pageUrl: string; mediaKey: MediaKey; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
+  | Readonly<{target: 'background'; type: 'start'; requestId: string; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; gainDb?: number}>
+  | Readonly<{target: 'background'; type: 'manifest'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number}>
+  | Readonly<{target: 'background'; type: 'session-heartbeat'; requestId: string; pageUrl: string; mediaKey: MediaKey; generation: number}>
+  | Readonly<{target: 'background'; type: 'video-clock'; requestId: string; pageUrl: string; mediaKey: MediaKey; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
   | Readonly<{target: 'background'; type: 'native-muted'; generation: number}>
-  | Readonly<{target: 'background'; type: 'disable'; generation: number}>
+  | Readonly<{target: 'background'; type: 'player-volume'; requestId: string; generation: number; volume: number; muted: boolean; activate: boolean}>
+  | Readonly<{target: 'offscreen'; type: 'player-volume'; requestId: string; tabId: number; generation: number; volume: number; muted: boolean; activate: boolean}>
+  | Readonly<{target: 'background'; type: 'disable'; mediaKey: MediaKey; generation: number}>
   | Readonly<{target: 'background'; type: 'dialnorm'; generation: number; mode: 'calibrated' | 'unity'}>
-  | Readonly<{target: 'offscreen'; type: 'start'; tabId: number; pageUrl: string; mediaKey: MediaKey; candidate: BilibiliAudioCandidate; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'}>
+  | Readonly<{target: 'background'; type: 'output-gain'; requestId: string; generation: number; gainDb: number}>
+  | Readonly<{target: 'offscreen'; type: 'start'; requestId: string; tabId: number; pageUrl: string; mediaKey: MediaKey; candidate: BilibiliAudioCandidate; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; gainDb?: number}>
+  | Readonly<{target: 'offscreen'; type: 'output-gain'; requestId: string; tabId: number; generation: number; gainDb: number}>
   | Readonly<{target: 'offscreen'; type: 'clock'; tabId: number; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
   | Readonly<{target: 'offscreen'; type: 'native-muted'; tabId: number; generation: number}>
-  | Readonly<{target: 'offscreen'; type: 'disable'; tabId: number; generation: number}>
+  | Readonly<{target: 'offscreen'; type: 'disable'; tabId: number; mediaKey: MediaKey; generation: number}>
   | Readonly<{target: 'offscreen'; type: 'dialnorm'; tabId: number; generation: number; mode: 'calibrated' | 'unity'}>
   | Readonly<{target: 'offscreen'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; bufferBase64: string}>
-  | Readonly<{target: 'background'; type: 'offscreen-status'; tabId: number; generation: number; phase: PlaybackPhase; reason: string | null; inbandJocConfirmed: boolean; profile: string | null; metrics: PlaybackMetrics}>;
+  | Readonly<{target: 'background'; type: 'offscreen-status'; requestId: string; tabId: number; mediaKey: MediaKey; generation: number; phase: PlaybackPhase; reason: string | null; inbandJocConfirmed: boolean; profile: string | null; metrics: PlaybackMetrics}>;
+
+export type LegacyOffscreenStatus = Readonly<{
+  readonly target: 'background';
+  readonly type: 'offscreen-status';
+  readonly tabId: number;
+  readonly generation: number;
+}>;
 
 /** Validates untrusted MAIN-world data before it reaches extension code. */
 export function isMainBridgeMessage(value: unknown): value is MainBridgeMessage {
@@ -90,7 +113,16 @@ export function isMainBridgeMessage(value: unknown): value is MainBridgeMessage 
 export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (!isRecord(value) || typeof value.target !== 'string' || typeof value.type !== 'string') return false;
   if (value.target === 'background' && value.type === 'toggle') return true;
-  if (value.target === 'background' && value.type === 'request-session') return true;
+  if (value.target === 'background' && value.type === 'document-active') return true;
+  if (value.type === 'output-gain' && (value.target === 'background' || value.target === 'offscreen')) {
+    return isNonEmptyString(value.requestId) && isGeneration(value.generation) && isOutputGainDb(value.gainDb)
+      && (value.target === 'background' || isTabId(value.tabId));
+  }
+  if (value.target === 'background' && value.type === 'request-session') {
+    return (value.force === undefined || typeof value.force === 'boolean')
+      && (value.requestId === undefined || isNonEmptyString(value.requestId))
+      && (value.generation === undefined || isGeneration(value.generation));
+  }
   if (value.target === 'background' && value.type === 'request-manifest') return typeof value.pageUrl === 'string';
   if (value.target === 'background' && value.type === 'page-media-range-request') {
     return isTabId(value.tabId) && isGeneration(value.generation) && isNonEmptyString(value.requestId)
@@ -104,42 +136,52 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
       && isNullableString(value.contentRange) && isNullableString(value.error) && isBase64String(value.bufferBase64);
   }
   if (value.target === 'background' && value.type === 'start') {
-    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates)
+    return isNonEmptyString(value.requestId) && typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates)
       && isGeneration(value.generation) && isNonNegativeFinite(value.videoTimeSamples)
-      && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity');
+      && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity') && isRendererMode(value.renderer)
+      && (value.gainDb === undefined || isOutputGainDb(value.gainDb));
   }
   if (value.target === 'background' && value.type === 'manifest') {
-    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates);
+    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates) && isGeneration(value.generation);
   }
   if (value.target === 'background' && value.type === 'session-heartbeat') {
-    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isGeneration(value.generation);
+    return isNonEmptyString(value.requestId) && typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isGeneration(value.generation);
   }
   if (value.target === 'background' && value.type === 'video-clock') {
-    return typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isGeneration(value.generation)
+    return isNonEmptyString(value.requestId) && typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isGeneration(value.generation)
       && isNonNegativeFinite(value.mediaTimeSamples) && typeof value.paused === 'boolean'
       && typeof value.buffering === 'boolean' && isFiniteNumber(value.playbackRate)
       && isNullableFiniteNumber(value.expectedDisplayTimeMs);
   }
-  if (value.target === 'background' && (value.type === 'native-muted' || value.type === 'disable')) {
+  if (value.target === 'background' && value.type === 'native-muted') {
     return isGeneration(value.generation);
   }
+  if ((value.target === 'background' || value.target === 'offscreen') && value.type === 'player-volume') {
+    return isNonEmptyString(value.requestId) && isGeneration(value.generation)
+      && isFiniteNumber(value.volume) && value.volume >= 0 && value.volume <= 1
+      && typeof value.muted === 'boolean' && typeof value.activate === 'boolean'
+      && (value.target === 'background' || isTabId(value.tabId));
+  }
+  if (value.target === 'background' && value.type === 'disable') return isMediaKey(value.mediaKey) && isGeneration(value.generation);
   if (value.target === 'background' && value.type === 'dialnorm') {
     return isGeneration(value.generation) && (value.mode === 'calibrated' || value.mode === 'unity');
   }
   if (value.target === 'offscreen' && value.type === 'start') {
-    return isTabId(value.tabId) && typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey)
+    return isNonEmptyString(value.requestId) && isTabId(value.tabId) && typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey)
       && isCandidate(value.candidate) && isGeneration(value.generation)
       && isNonNegativeFinite(value.videoTimeSamples)
-      && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity');
+      && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity') && isRendererMode(value.renderer)
+      && (value.gainDb === undefined || isOutputGainDb(value.gainDb));
   }
   if (value.target === 'offscreen' && value.type === 'clock') {
     return isTabId(value.tabId) && isGeneration(value.generation) && isNonNegativeFinite(value.mediaTimeSamples)
       && typeof value.paused === 'boolean' && typeof value.buffering === 'boolean'
       && isFiniteNumber(value.playbackRate) && isNullableFiniteNumber(value.expectedDisplayTimeMs);
   }
-  if (value.target === 'offscreen' && (value.type === 'native-muted' || value.type === 'disable')) {
+  if (value.target === 'offscreen' && value.type === 'native-muted') {
     return isTabId(value.tabId) && isGeneration(value.generation);
   }
+  if (value.target === 'offscreen' && value.type === 'disable') return isTabId(value.tabId) && isMediaKey(value.mediaKey) && isGeneration(value.generation);
   if (value.target === 'offscreen' && value.type === 'dialnorm') {
     return isTabId(value.tabId) && isGeneration(value.generation) && (value.mode === 'calibrated' || value.mode === 'unity');
   }
@@ -149,11 +191,20 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
       && isNullableString(value.contentRange) && isNullableString(value.error) && isBase64String(value.bufferBase64);
   }
   if (value.target === 'background' && value.type === 'offscreen-status') {
-      return isTabId(value.tabId) && isGeneration(value.generation) && isPlaybackPhase(value.phase)
+      return isNonEmptyString(value.requestId) && isTabId(value.tabId) && isMediaKey(value.mediaKey) && isGeneration(value.generation) && isPlaybackPhase(value.phase)
       && isNullableString(value.reason) && typeof value.inbandJocConfirmed === 'boolean'
       && isNullableString(value.profile) && isPlaybackMetrics(value.metrics);
   }
   return false;
+}
+
+export function isLegacyOffscreenStatus(value: unknown): value is LegacyOffscreenStatus {
+  return isRecord(value)
+    && value.target === 'background'
+    && value.type === 'offscreen-status'
+    && value.requestId === undefined
+    && isTabId(value.tabId)
+    && isGeneration(value.generation);
 }
 
 function isMediaKey(value: unknown): value is MediaKey {
@@ -175,9 +226,16 @@ function isCandidate(value: unknown): value is BilibiliAudioCandidate {
 function isPlaybackMetrics(value: unknown): value is PlaybackMetrics {
   if (!isRecord(value)) return false;
   return isNonEmptyString(value.stage)
+    && isRendererMode(value.renderer)
+    && (value.virtualLayout === null || value.virtualLayout === '7.1.4')
+    && (value.hrtf === null || value.hrtf === 'Built-in SADIE II D1')
+    && isNullableFiniteNumber(value.binauralLatencyMs)
+    && isNullableFiniteNumber(value.binauralP95Ms)
+    && isNullableFiniteNumber(value.binauralMaxMs)
     && isNullableFiniteNumber(value.currentVideoMediaTime)
     && isNullableFiniteNumber(value.currentAudioMediaTime)
     && isNullableFiniteNumber(value.driftMs)
+    && isNullableFiniteNumber(value.averageDb)
     && isNullableFiniteNumber(value.driftP50Ms)
     && isNullableFiniteNumber(value.driftP95Ms)
     && isNullableFiniteNumber(value.driftMaxMs)
@@ -208,6 +266,10 @@ function isPlaybackMetrics(value: unknown): value is PlaybackMetrics {
 function isPlaybackPhase(value: unknown): value is PlaybackPhase {
   return value === 'disabled' || value === 'preparing' || value === 'ready' || value === 'active'
     || value === 'paused' || value === 'buffering' || value === 'error';
+}
+
+function isRendererMode(value: unknown): value is RendererMode {
+  return value === 'stereo' || value === 'binaural';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

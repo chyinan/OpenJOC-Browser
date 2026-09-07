@@ -1,4 +1,4 @@
-import {canStartDecode, isCurrentGeneration} from '../src/generation.js';
+import {canStartDecode, isCurrentGeneration, shouldRecreateWorkerForGeneration} from '../src/generation.js';
 import {DecoderGenerationSlot} from '../src/decoder-generation.js';
 
 function assert(condition: boolean, message: string): void {
@@ -14,6 +14,10 @@ function run(): void {
   assert(canStartDecode(2, 1, 2), 'new generation can replace stale work');
   assert(isCurrentGeneration(2, 2), 'current PCM message is accepted');
   assert(!isCurrentGeneration(1, 2), 'old PCM/EOS message is rejected');
+  assert(shouldRecreateWorkerForGeneration(14, 1), 'a generation rollback recreates the worker');
+  assert(shouldRecreateWorkerForGeneration(14, 14), 'an equal-generation restart recreates the worker to clear queued commands');
+  assert(!shouldRecreateWorkerForGeneration(14, 15), 'a forward generation can safely reuse the worker');
+  assert(!shouldRecreateWorkerForGeneration(null, 1), 'the first generation does not recreate a missing worker');
 }
 
 async function runAsync(): Promise<void> {
