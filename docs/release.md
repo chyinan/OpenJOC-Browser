@@ -17,6 +17,10 @@ OpenJOC-Browser-v0.1.0/
   bilibili-content.bundle.js
   bilibili-main-bridge.js
   bilibili-audio-controls.js
+  icons/icon-16.png
+  icons/icon-32.png
+  icons/icon-48.png
+  icons/icon-128.png
   wasm/openjoc_wasm.wasm
   LICENSE
   THIRD_PARTY_NOTICES.txt
