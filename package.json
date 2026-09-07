@@ -23,6 +23,6 @@
     "test": "tsc -p tsconfig.test.json && node .test-dist/tests/audio-queue.test.js && node .test-dist/tests/worker-generation.test.js && node .test-dist/tests/cmaf-transport.test.js && node .test-dist/tests/cmaf-fetcher.test.js && node .test-dist/tests/cmaf-window.test.js && node .test-dist/tests/sync-state.test.js && node .test-dist/tests/timestamped-pcm-queue.test.js && node .test-dist/tests/media-url-policy.test.js && node .test-dist/tests/extension-protocol.test.js && node .test-dist/tests/bilibili-manifest.test.js && node .test-dist/tests/decode-backpressure.test.js && node .test-dist/tests/mock-bilibili-harness.test.js && node .test-dist/tests/video-clock-estimate.test.js && node .test-dist/tests/joc-overlay-state.test.js && node .test-dist/tests/audio-level.test.js && node .test-dist/tests/decode-progress.test.js && node .test-dist/tests/binaural-contract.test.js && node .test-dist/tests/media-session-policy.test.js && node .test-dist/tests/start-handshake.test.js"
   },
   "devDependencies": {
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }
