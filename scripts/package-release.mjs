@@ -25,8 +25,8 @@ const crcTable = Array.from({length: 256}, (_unused, index) => {
 
 const files = [
   ...collectFiles(extensionRoot),
-  {relativePath: 'LICENSE', bytes: readFileSync(join(browserRoot, 'LICENSE'))},
-  {relativePath: 'THIRD_PARTY_NOTICES.txt', bytes: readFileSync(join(browserRoot, 'THIRD_PARTY_NOTICES.md'))},
+  {relativePath: 'LICENSE', bytes: normalizeTextBytes('LICENSE', readFileSync(join(browserRoot, 'LICENSE')))},
+  {relativePath: 'THIRD_PARTY_NOTICES.txt', bytes: normalizeTextBytes('THIRD_PARTY_NOTICES.txt', readFileSync(join(browserRoot, 'THIRD_PARTY_NOTICES.md')))},
 ].sort((left, right) => left.relativePath.localeCompare(right.relativePath, 'en'));
 if (!files.some((file) => file.relativePath === 'manifest.json')) throw new Error('extension manifest is missing');
 if (!files.some((file) => file.relativePath.toLowerCase().endsWith('.wasm'))) throw new Error('built WASM is missing from extension output');
@@ -59,8 +59,16 @@ function walk(root, current, result) {
     if (entry.name.startsWith('.') || entry.name.endsWith('.map')) continue;
     const path = join(current, entry.name);
     if (entry.isDirectory()) walk(root, path, result);
-    else if (entry.isFile()) result.push({relativePath: relative(root, path).replaceAll('\\', '/'), bytes: readFileSync(path)});
+    else if (entry.isFile()) {
+      const relativePath = relative(root, path).replaceAll('\\', '/');
+      result.push({relativePath, bytes: normalizeTextBytes(relativePath, readFileSync(path))});
+    }
   }
+}
+
+function normalizeTextBytes(relativePath, bytes) {
+  if (!/\.(?:html?|js|json|txt|md)$/i.test(relativePath)) return bytes;
+  return Buffer.from(bytes.toString('utf8').replaceAll('\r\n', '\n').replaceAll('\r', '\n'), 'utf8');
 }
 
 function createStoredZip(files, rootName) {
