@@ -1,6 +1,15 @@
 .qa/
+.debug-edge-*/
 .test-dist/
 artifacts/
+release/
+.cache/
+coverage/
+target/
+*.log
+.env
+.env.*
+!.env.example
 extension/*.js
 extension/wasm/
 node_modules/

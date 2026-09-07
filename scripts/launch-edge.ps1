@@ -3,7 +3,14 @@ param(
 )
 
 $browserRoot = Split-Path -Parent $PSScriptRoot
-$edgePath = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+$edgePath = Get-Command msedge.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
+$edgeCandidates = @(
+    $edgePath,
+    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
+    (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\Application\msedge.exe')
+)
+$edgePath = $edgeCandidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 $profilePath = Join-Path $browserRoot ('.qa\edge-profile-{0}' -f $Port)
 
 if (-not (Test-Path -LiteralPath $edgePath)) {

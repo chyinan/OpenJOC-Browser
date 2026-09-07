@@ -4,8 +4,9 @@ param(
 
 $browserRoot = Split-Path -Parent $PSScriptRoot
 $candidates = @(
-    'C:\Program Files\Google\Chrome\Application\chrome.exe',
-    'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+    (Get-Command chrome.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+    (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
     (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe')
 )
 $chromePath = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1

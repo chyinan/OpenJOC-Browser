@@ -3,11 +3,10 @@
 import {resolve, dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {resolveOpenjocRoot} from './openjoc-source.mjs';
 
 const browserRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const openjocRoot = process.env.OPENJOC_ROOT === undefined
-  ? resolve(browserRoot, '..', 'OpenJOC')
-  : resolve(process.env.OPENJOC_ROOT);
+const openjocRoot = await resolveOpenjocRoot();
 const cargo = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 const result = spawnSync(cargo, [
   'check',
