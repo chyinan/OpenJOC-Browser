@@ -25,7 +25,7 @@ export async function resolveOpenjocRoot() {
 
 async function ensureCachedOpenjoc() {
   const root = join(browserRoot, '.cache', 'openjoc', OPENJOC_SOURCE_PIN);
-  if (!existsSync(join(root, '.git'))) {
+  if (!existsSync(join(root, '.git')) && readArchivePin(root) !== OPENJOC_SOURCE_PIN) {
     if (existsSync(root)) rmSync(root, {recursive: true, force: true});
     mkdirSync(dirname(root), {recursive: true});
     try {
