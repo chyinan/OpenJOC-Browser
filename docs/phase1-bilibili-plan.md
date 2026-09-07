@@ -1,4 +1,8 @@
-# Phase 1 Bilibili JOC/CMAF integration
+# Historical Phase 1 Bilibili JOC/CMAF integration plan
+
+> This document records the original integration plan and observed transport.
+> It is retained as engineering history; the current public behavior and
+> limitations are documented in the root README and `docs/` release guides.
 
 Phase 1 adds a Chromium MV3 adapter for standard Bilibili VOD pages. The page's normal `<video>` remains the video renderer and master clock. OpenJOC owns only the replacement audio path.
 

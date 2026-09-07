@@ -1,4 +1,8 @@
-# Phase 0 validation record
+# Historical Phase 0 validation record
+
+> This document records an earlier development checkpoint. For the current
+> v0.1.0 scope, installation, architecture, limitations, and release gates,
+> use the linked documents in the repository root README.
 
 Date: 2026-09-03
 

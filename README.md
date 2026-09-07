@@ -1,77 +1,126 @@
-# OpenJOC Browser
+# OpenJOC-Browser
 
-OpenJOC Browser brings OpenJOC E-AC-3 JOC decoding to Chromium browsers without relying on the platform's native Dolby Atmos decoder.
+[![CI](https://github.com/chyinan/OpenJOC-Browser/actions/workflows/ci.yml/badge.svg)](https://github.com/chyinan/OpenJOC-Browser/actions/workflows/ci.yml)
+[![Release](https://github.com/chyinan/OpenJOC-Browser/actions/workflows/release.yml/badge.svg)](https://github.com/chyinan/OpenJOC-Browser/actions/workflows/release.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Phase 0 is a local developer player. It accepts raw `.ec3` files, decodes them with OpenJOC compiled to `wasm32-unknown-unknown`, renders the existing Stereo (Speakers) path, and sends 48 kHz, two-channel Float32 PCM through an AudioWorklet. Phase 1 adds a standard Bilibili VOD adapter: the normal Bilibili video remains the video source/master clock while an entitled E-AC-3 JOC representation is fetched through bounded CMAF ranges and decoded by OpenJOC WASM.
+OpenJOC-Browser brings OpenJOC E-AC-3 JOC decoding to Chromium-based web playback through WebAssembly and Web Audio.
 
-## Architecture
+The first public release targets Microsoft Edge and Google Chrome. The primary site integration is standard Bilibili VOD when the current account/session exposes an E-AC-3 JOC representation. A local extension player is also available for project-owned `.ec3` fixtures and development testing.
+
+## Current capabilities
+
+- OpenJOC WASM decoding of E-AC-3 JOC.
+- Bilibili standard VOD detection and bounded CMAF range loading.
+- Stereo (Speakers) output and Binaural (Headphones) output.
+- Fixed Binaural virtual layout: 7.1.4.
+- Built-in SADIE II D1 (KU100) HRTF for Binaural mode.
+- The Bilibili `<video>` remains the video renderer and master clock.
+- Play, pause, seek, buffering, refresh, and single-page media changes are generation-aware.
+- Saved renderer, Dialnorm, always-enable, and custom output-gain preferences.
+- Diagnostics for JOC profile, sync drift, buffers, underruns, decode timing, and WASM memory.
+
+## How it works
 
 ```text
-Bilibili video page
-  -> MAIN-world playurl observation
+Bilibili page
+  -> MAIN-world manifest/media bridge
   -> isolated content controller
-  -> MV3 service worker relay
-  -> offscreen bounded CMAF fetch
+  -> MV3 service worker
+  -> offscreen AudioContext
+  -> bounded CMAF fetch and browser transport parsing
   -> OpenJOC WASM decoder Worker
-  -> timestamped AudioWorklet queue
-  -> Web Audio destination
-
-The Phase 0 local file path remains available from the extension player page.
+  -> timestamped AudioWorklet PCM
+  -> Web Audio output
 ```
 
-The MV3 service worker only relays typed messages and owns the offscreen document lifecycle. It does not own decoder or realtime audio state. The browser CMAF layer parses only ISO-BMFF transport boundaries; OpenJOC's existing `OpenJocSession` owns E-AC-3, JOC, OAMD, reconstruction, Stereo math, in-band confirmation, and timestamp continuity.
+The browser code handles page integration, media URL policy, ISO-BMFF transport boundaries, lifecycle, and clock alignment. E-AC-3/JOC parsing and rendering remain in OpenJOC. See [the architecture guide](docs/architecture.md).
 
-## Build
+## Install from a GitHub release
 
-Requirements:
+When a GitHub release is available, download `OpenJOC-Browser-v0.1.0-chromium.zip` from its Assets and extract it. The extracted top-level directory is the loadable extension root.
 
-- Rust 1.85 or newer with `wasm32-unknown-unknown` installed.
-- Node.js 24 and the locked TypeScript 6.0.3 dev dependency.
-- A sibling `OpenJOC` checkout, or `OPENJOC_ROOT` pointing at one.
+For Microsoft Edge:
 
-From this repository:
+1. Open `edge://extensions`.
+2. Enable Developer mode.
+3. Choose **Load unpacked**.
+4. Select the extracted `OpenJOC-Browser-v0.1.0/` directory—the directory containing `manifest.json`.
+
+For Google Chrome, use the same steps at `chrome://extensions`.
+
+The extension is not distributed through the Chrome Web Store or Microsoft Edge Add-ons in this release. To update it, remove or reload the old unpacked directory and load the newly extracted directory. To uninstall, use the browser extension page's **Remove** action.
+
+See [installation](docs/installation.md) for permission details and limitations.
+
+## Use it on Bilibili
+
+1. Open a supported standard Bilibili VOD page.
+2. Wait for the OpenJOC panel to report that a JOC stream is detected.
+3. Choose **启用 OpenJOC**.
+4. Select **Stereo (Speakers)** or **Binaural (Headphones)** under **输出方式**.
+5. Select **Calibrated** or **Unity / 兼容模式** under **节目电平**.
+6. If needed, open **高级** to inspect diagnostics or change **自定义增益**.
+
+**Calibrated** follows the programme Dialnorm metadata according to OpenJOC semantics. **Unity / 兼容模式** disables Dialnorm attenuation; it is not a volume boost. The custom gain control is separate and ranges from −12 dB to +12 dB in 0.5 dB steps.
+
+OpenJOC takes over only after a non-empty in-band JOC profile and usable PCM are confirmed. If it is disabled or fails, the original Bilibili audio is restored with the latest player mute and volume settings.
+
+See [usage](docs/usage.md) and [diagnostics](docs/diagnostics.md).
+
+## Scope and limitations
+
+The v0.1.0 implementation targets:
+
+- Microsoft Edge and Google Chrome on Chromium's extension platform.
+- Standard Bilibili VOD pages.
+- 48 kHz, two-channel output and 1.0x playback.
+- Unencrypted, browser-fetchable E-AC-3 JOC CMAF representations.
+
+Safari, Firefox, DRM/encrypted representations, other Bilibili player classes, non-1.0x playback, head tracking, custom SOFA selection, and virtual 9.1.6 are not part of this release. Bilibili availability can vary by account, region, content, and session entitlement. A page title or ordinary E-AC-3 label is not treated as proof of JOC; in-band OpenJOC confirmation is required.
+
+This project does not claim parity with a platform Dolby renderer, identical native Dolby/Apple binaural behavior, lossless reproduction of an authored master, or certification/endorsement by Dolby Laboratories.
+
+## Privacy and security
+
+The extension reads the current Bilibili page's media identity, playback manifest candidates, video clock, and player mute/volume state only to operate the current session. It does not send audio, diagnostics, or browsing history to an OpenJOC service. It has no analytics, telemetry, account login, or credential collection. Only playback preferences are stored locally in extension storage.
+
+Media requests go to Bilibili endpoints needed for the selected session. Signed query strings are not persisted in extension storage or included in diagnostics. The exact permissions and data flows are documented in [privacy](docs/privacy.md) and [security](SECURITY.md).
+
+## Build from source
+
+Prerequisites are Git, Node.js 24.15.0, npm, Rust 1.85 or newer, and the `wasm32-unknown-unknown` Rust target. The build resolves OpenJOC from its public repository at an exact commit; an existing sibling checkout is not required.
 
 ```powershell
+npm ci
+npm run check:version
+npm run check:release-policy
 npm run check:wasm
 npm run check
-npm run build
-npm run cmaf-parity
-```
-
-`npm run build` builds the `openjoc-wasm` crate from the sibling OpenJOC checkout and writes the unpacked extension to `extension/`. The local Phase 0 player rejects input files larger than 128 MiB. Bilibili Phase 1 uses bounded initialization and indexed media ranges; it does not preload an entire movie.
-
-Open `edge://extensions` or `chrome://extensions`, enable Developer mode, choose Load unpacked, and select the absolute `extension/` directory. On a standard `https://www.bilibili.com/video/...` page, the extension adds the OpenJOC control panel when the page is reachable and the current session exposes a candidate representation.
-
-## Verification
-
-The project-owned synthetic lifecycle fixture is `fixtures/joc.lifecycle.ec3` (128 access units, 524288 bytes). Its SHA-256 is:
-
-```text
-b860509a1613134931e1e39b9d2b6d4d31687b1a6586d8e2bcf5fe99e7da14f8
-```
-
-Run the native-vs-WASM and CMAF parity gates after building:
-
-```powershell
-npm run parity
-npm run cmaf-parity
 npm test
+npm run build
+npm run package:release -- --version 0.1.0
+npm run validate:release -- --version 0.1.0
 ```
 
-`npm run parity` must report `NATIVE_VS_WASM_PCM=BIT_IDENTICAL`. `npm run cmaf-parity` must report `RAW_VS_CMAF_PCM=BIT_IDENTICAL`.
+The generated extension is written to `extension/`. The release ZIP is written to `release/`. See [development](docs/development.md) for the exact toolchain, parity gates, browser QA, and an explicit local-source override.
 
-The Edge CDP smoke test needs a controlled Edge instance with the unpacked extension loaded:
+## Relationship to OpenJOC
 
-```powershell
-.\scripts\launch-edge.ps1 -Port 9229
-node scripts/cdp-qa.mjs <port> Edge <extension-id>
-node scripts/cdp-qa.mjs <port> Edge <extension-id> fixtures/malformed.ec3 fixtures/joc.ec3 --expect-error
-```
+This repository consumes the OpenJOC WASM bridge from the public OpenJOC Git repository at commit [`e123aa3a0e2878587c73130585a5606db4ff233f`](https://github.com/chyinan/OpenJOC/commit/e123aa3a0e2878587c73130585a5606db4ff233f). The Browser build checks that the resolved checkout is exactly that commit. OpenJOC remains a separate project and is licensed under Apache-2.0.
 
-Use `scripts/launch-chrome.ps1` with a different port for Chrome. It fails clearly when Chrome is not installed. A live Bilibili Dolby/JOC smoke requires the current browser profile to be entitled to that representation; the inspected temporary QA profile exposed only ordinary `mp4a`, which is correctly rejected.
+## Project documents
 
-## Scope
+- [Installation](docs/installation.md)
+- [Usage](docs/usage.md)
+- [Architecture](docs/architecture.md)
+- [Diagnostics](docs/diagnostics.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Privacy](docs/privacy.md)
+- [Development](docs/development.md)
+- [Release engineering](docs/release.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-Phase 1 supports standard Bilibili VOD, Chromium/Edge, OpenJOC WASM, E-AC-3 JOC, Stereo (Speakers), and 1.0x playback. Binaural, Custom SOFA, virtual 9.1.6, non-1.0x playback, Safari, Firefox, DRM/encrypted representations, and other Bilibili player classes remain deferred or unsupported. See [docs/phase1-bilibili-plan.md](docs/phase1-bilibili-plan.md) for the adapter boundary and observed transport.
+## License and trademarks
 
-This project does not claim parity with native Dolby playback, Dolby renderer equivalence, or lossless reproduction of an authored master.
+OpenJOC-Browser source is available under the [Apache License 2.0](LICENSE). OpenJOC-Browser is an independent open-source project. “Dolby”, “Dolby Atmos”, and related marks belong to Dolby Laboratories and are used here only to describe compatibility with media formats or workflows; this project is not affiliated with, endorsed by, certified by, or sponsored by Dolby Laboratories.
