@@ -67,7 +67,7 @@ function walk(root, current, result) {
 }
 
 function normalizeTextBytes(relativePath, bytes) {
-  if (!/\.(?:html?|js|json|txt|md)$/i.test(relativePath)) return bytes;
+  if (relativePath !== 'LICENSE' && !/\.(?:html?|js|json|txt|md)$/i.test(relativePath)) return bytes;
   return Buffer.from(bytes.toString('utf8').replaceAll('\r\n', '\n').replaceAll('\r', '\n'), 'utf8');
 }
 
