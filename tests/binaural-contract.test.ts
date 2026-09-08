@@ -27,6 +27,8 @@ function run(): void {
     candidates: [],
     generation: 1,
     videoTimeSamples: 0,
+    paused: false,
+    buffering: false,
     dialnorm: 'calibrated',
     renderer: 'binaural',
   };
@@ -50,6 +52,8 @@ function run(): void {
     },
     generation: 1,
     videoTimeSamples: 0,
+    paused: false,
+    buffering: false,
     dialnorm: 'calibrated',
     renderer: 'binaural',
   };

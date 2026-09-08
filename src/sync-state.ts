@@ -40,6 +40,7 @@ export type ResumeAudioPhaseOptions = Readonly<{
 
 const SYNC_TOLERANCE_SAMPLES = 2_400;
 const MAX_DRIFT_SAMPLES = 256;
+const AUDIO_LEAD_RESYNC_THRESHOLD_SAMPLES = 2 * 48_000;
 
 /** Creates the inactive initial state for one Bilibili media identity. */
 export function createSyncState(): SyncState {
@@ -63,8 +64,8 @@ export function resumeAudioPhase(
   phase: AudioLifecyclePhase,
   options: ResumeAudioPhaseOptions,
 ): AudioLifecyclePhase {
+  if (options.isNativeMuted && (phase === 'ready' || phase === 'paused' || phase === 'buffering')) return 'active';
   if (phase !== 'paused' && phase !== 'buffering') return phase;
-  if (options.isNativeMuted) return 'active';
   return options.isJocConfirmed ? 'ready' : 'preparing';
 }
 
@@ -150,4 +151,12 @@ export function computeSyncAction(
   if (drift < -SYNC_TOLERANCE_SAMPLES) return {type: 'wait', targetMediaSamples: target};
   if (drift > SYNC_TOLERANCE_SAMPLES) return {type: 'trim', targetMediaSamples: target};
   return {type: 'play', targetMediaSamples: target};
+}
+
+/** Returns whether an authoritative page clock is too far behind queued audio to wait for. */
+export function shouldResyncForAudioLead(audioMediaSamples: number | null, videoMediaSamples: number): boolean {
+  if (audioMediaSamples === null) return false;
+  if (!Number.isSafeInteger(audioMediaSamples) || audioMediaSamples < 0) throw new Error('audio media samples are invalid');
+  if (!Number.isSafeInteger(videoMediaSamples) || videoMediaSamples < 0) throw new Error('video media samples are invalid');
+  return audioMediaSamples - videoMediaSamples > AUDIO_LEAD_RESYNC_THRESHOLD_SAMPLES;
 }

@@ -205,6 +205,20 @@ test('Bilibili mute and volume operate through the full bridge without restartin
   } finally {extension.close();}
 });
 
+test('starting OpenJOC from an already paused video preserves the paused state', async () => {
+  const extension = await createExtension();
+  try {
+    const page = await extension.page('paused-start');
+    page.video.paused = true;
+    page.manifest();
+    page.enable();
+    await waitFor(() => extension.messages.some(message => message.target === 'offscreen' && message.type === 'start'), 'paused start request');
+    const start = extension.messages.find(message => message.target === 'offscreen' && message.type === 'start');
+    assert.equal(start?.paused, true);
+    assert.equal(start?.buffering, false);
+  } finally {extension.close();}
+});
+
 test('resume rebuilds a reclaimed audio document without another enable click', async () => {
   const extension = await createExtension({preferences: {alwaysEnableOpenJoc: true, dialnormMode: 'unity', outputGainDb: -3}});
   try {

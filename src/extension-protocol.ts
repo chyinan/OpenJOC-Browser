@@ -72,7 +72,7 @@ export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'request-manifest'; pageUrl: string}>
   | Readonly<{target: 'background'; type: 'page-media-range-request'; tabId: number; generation: number; requestId: string; url: string; start: number; end: number}>
   | Readonly<{target: 'background'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; bufferBase64: string}>
-  | Readonly<{target: 'background'; type: 'start'; requestId: string; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; gainDb?: number}>
+  | Readonly<{target: 'background'; type: 'start'; requestId: string; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; paused?: boolean; buffering?: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; gainDb?: number}>
   | Readonly<{target: 'background'; type: 'manifest'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number}>
   | Readonly<{target: 'background'; type: 'session-heartbeat'; requestId: string; pageUrl: string; mediaKey: MediaKey; generation: number}>
   | Readonly<{target: 'background'; type: 'video-clock'; requestId: string; pageUrl: string; mediaKey: MediaKey; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
@@ -82,7 +82,7 @@ export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'disable'; mediaKey: MediaKey; generation: number}>
   | Readonly<{target: 'background'; type: 'dialnorm'; generation: number; mode: 'calibrated' | 'unity'}>
   | Readonly<{target: 'background'; type: 'output-gain'; requestId: string; generation: number; gainDb: number}>
-  | Readonly<{target: 'offscreen'; type: 'start'; requestId: string; tabId: number; pageUrl: string; mediaKey: MediaKey; candidate: BilibiliAudioCandidate; generation: number; videoTimeSamples: number; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; gainDb?: number}>
+  | Readonly<{target: 'offscreen'; type: 'start'; requestId: string; tabId: number; pageUrl: string; mediaKey: MediaKey; candidate: BilibiliAudioCandidate; generation: number; videoTimeSamples: number; paused: boolean; buffering: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; gainDb?: number}>
   | Readonly<{target: 'offscreen'; type: 'output-gain'; requestId: string; tabId: number; generation: number; gainDb: number}>
   | Readonly<{target: 'offscreen'; type: 'clock'; tabId: number; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
   | Readonly<{target: 'offscreen'; type: 'native-muted'; tabId: number; generation: number}>
@@ -138,6 +138,8 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (value.target === 'background' && value.type === 'start') {
     return isNonEmptyString(value.requestId) && typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey) && isCandidateArray(value.candidates)
       && isGeneration(value.generation) && isNonNegativeFinite(value.videoTimeSamples)
+      && (value.paused === undefined || typeof value.paused === 'boolean')
+      && (value.buffering === undefined || typeof value.buffering === 'boolean')
       && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity') && isRendererMode(value.renderer)
       && (value.gainDb === undefined || isOutputGainDb(value.gainDb));
   }
@@ -170,6 +172,7 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
     return isNonEmptyString(value.requestId) && isTabId(value.tabId) && typeof value.pageUrl === 'string' && isMediaKey(value.mediaKey)
       && isCandidate(value.candidate) && isGeneration(value.generation)
       && isNonNegativeFinite(value.videoTimeSamples)
+      && typeof value.paused === 'boolean' && typeof value.buffering === 'boolean'
       && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity') && isRendererMode(value.renderer)
       && (value.gainDb === undefined || isOutputGainDb(value.gainDb));
   }

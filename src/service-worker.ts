@@ -13,6 +13,8 @@ type BilibiliSession = {
   readonly candidate: BilibiliAudioCandidate;
   readonly generation: number;
   readonly videoTimeSamples: number;
+  readonly paused: boolean;
+  readonly buffering: boolean;
   readonly dialnorm: 'calibrated' | 'unity';
   readonly renderer: RendererMode;
   readonly gainDb: number;
@@ -32,6 +34,7 @@ const sessions = new Map<number, BilibiliSession>();
 const activeDocumentIds = new Map<number, string>();
 const pendingPageRanges = new Map<string, PendingPageRange>();
 const lifecycleTails = new Map<number, Promise<void>>();
+const clockTails = new Map<number, Promise<void>>();
 const legacyRecoveryTabs = new Set<number>();
 let offscreenCreation: Promise<void> | null = null;
 let offscreenRecreation: Promise<void> | null = null;
@@ -138,7 +141,7 @@ function invalidateObservedSessions(observedSessions: ReadonlyArray<BilibiliSess
 
 async function sendSessionStart(session: BilibiliSession): Promise<void> {
   try {
-    await sendToOffscreen({target: 'offscreen', type: 'start', requestId: session.requestId, tabId: session.tabId, pageUrl: session.pageUrl, mediaKey: session.mediaKey, candidate: session.candidate, generation: session.generation, videoTimeSamples: session.videoTimeSamples, dialnorm: session.dialnorm, renderer: session.renderer, gainDb: session.gainDb});
+    await sendToOffscreen({target: 'offscreen', type: 'start', requestId: session.requestId, tabId: session.tabId, pageUrl: session.pageUrl, mediaKey: session.mediaKey, candidate: session.candidate, generation: session.generation, videoTimeSamples: session.videoTimeSamples, paused: session.paused, buffering: session.buffering, dialnorm: session.dialnorm, renderer: session.renderer, gainDb: session.gainDb});
   } catch (error: unknown) {
     const current = sessions.get(session.tabId);
     if (current?.requestId === session.requestId && current.generation === session.generation) {
@@ -199,7 +202,7 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
       const baseline = isReloadRecovery ? undefined : previous;
       if (isStaleContentGeneration(isReloadRecovery ? null : previousSnapshot, message.generation)) return;
       const generation = Math.max(message.generation, baseline?.started === true ? baseline.generation + 1 : baseline?.generation ?? 0);
-      const next = {tabId, documentId, requestId: message.requestId, pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: message.videoTimeSamples, dialnorm: message.dialnorm, renderer: message.renderer, gainDb: message.gainDb ?? 0, started: true};
+      const next = {tabId, documentId, requestId: message.requestId, pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: message.videoTimeSamples, paused: message.paused ?? false, buffering: message.buffering ?? false, dialnorm: message.dialnorm, renderer: message.renderer, gainDb: message.gainDb ?? 0, started: true};
       sessions.set(tabId, next);
       await sendSessionStart(next);
       return;
@@ -233,7 +236,7 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
       if (isStaleContentGeneration(baselineSnapshot, message.generation)) return;
       const hasSessionChanged = mediaSessionRestartRequired(baselineSnapshot, nextSnapshot);
       const generation = Math.max(message.generation, nextManifestGeneration(baselineSnapshot, nextSnapshot));
-      const next = {tabId, documentId, requestId: baseline?.requestId ?? crypto.randomUUID(), pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: baseline?.videoTimeSamples ?? 0, dialnorm: baseline?.dialnorm ?? 'calibrated', renderer: baseline?.renderer ?? 'stereo', gainDb: baseline?.gainDb ?? 0, started: baseline?.started ?? false};
+      const next = {tabId, documentId, requestId: baseline?.requestId ?? crypto.randomUUID(), pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: baseline?.videoTimeSamples ?? 0, paused: baseline?.paused ?? false, buffering: baseline?.buffering ?? false, dialnorm: baseline?.dialnorm ?? 'calibrated', renderer: baseline?.renderer ?? 'stereo', gainDb: baseline?.gainDb ?? 0, started: baseline?.started ?? false};
       sessions.set(tabId, next);
       if (baseline?.started === true && hasSessionChanged) await sendSessionStart(next);
       return;
@@ -272,8 +275,10 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
         await sendSessionStart(restarted);
         return;
       }
-      sessions.set(tabId, {...session, videoTimeSamples: message.mediaTimeSamples});
       await sendToOffscreen({target: 'offscreen', type: 'clock', tabId, generation: message.generation, mediaTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering, playbackRate: message.playbackRate, expectedDisplayTimeMs: message.expectedDisplayTimeMs});
+      const current = sessions.get(tabId);
+      if (current === undefined || !current.started || current.requestId !== session.requestId || current.generation !== session.generation || mediaKeyEquals(current.mediaKey, session.mediaKey) === false) return;
+      sessions.set(tabId, {...current, videoTimeSamples: message.mediaTimeSamples});
       return;
     }
     case 'native-muted': {
@@ -348,6 +353,22 @@ function enqueueLifecycleMessage(message: LifecycleContentMessage, tabId: number
   enqueueLifecycleOperation(tabId, () => handleContentMessage(message, tabId, documentId));
 }
 
+function enqueueClockMessage(message: Extract<RuntimeMessage, {target: 'background'; type: 'video-clock'}>, tabId: number, documentId: string | null): void {
+  const lifecycleBarrier = lifecycleTails.get(tabId) ?? Promise.resolve();
+  const previousTail = clockTails.get(tabId) ?? Promise.resolve();
+  const nextTail = previousTail
+    .catch(() => undefined)
+    .then(async(): Promise<void> => {
+      await lifecycleBarrier.catch(() => undefined);
+      await handleContentMessage(message, tabId, documentId);
+    })
+    .catch(() => undefined)
+    .finally((): void => {
+      if (clockTails.get(tabId) === nextTail) clockTails.delete(tabId);
+    });
+  clockTails.set(tabId, nextTail);
+}
+
 async function handleOffscreenRangeRequest(message: Extract<RuntimeMessage, {target: 'background'; type: 'page-media-range-request'}>): Promise<void> {
   const session = sessions.get(message.tabId);
   if (session === undefined || !session.started || message.generation !== session.generation) return;
@@ -392,7 +413,8 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessage
   if (rawMessage.target === 'background') {
     const senderTabId = tabIdFromSender(sender);
     if (senderTabId !== null) {
-      if (isLifecycleContentMessage(rawMessage)) enqueueLifecycleMessage(rawMessage, senderTabId, sender.documentId ?? null);
+      if (rawMessage.type === 'video-clock') enqueueClockMessage(rawMessage, senderTabId, sender.documentId ?? null);
+      else if (isLifecycleContentMessage(rawMessage)) enqueueLifecycleMessage(rawMessage, senderTabId, sender.documentId ?? null);
       else void handleContentMessage(rawMessage, senderTabId, sender.documentId ?? null).catch(() => undefined);
     } else if (sender.id === chrome.runtime.id && rawMessage.type === 'page-media-range-request') {
       void handleOffscreenRangeRequest(rawMessage).catch(() => undefined);

@@ -68,6 +68,7 @@ export async function createPlaybackRuntime(options = {}) {
   const listeners = [];
   const pcmMessages = [];
   const workletStats = [];
+  let renderedQuantumCount = 0;
   let processorClass;
   let newProcessorPort;
   let idleOffsetMs = 0;
@@ -114,7 +115,12 @@ export async function createPlaybackRuntime(options = {}) {
           if (data.type === 'stats') workletStats.push(data);
           queueMicrotask(() => this.port.onmessage?.({data}));
         },
+        dispatch(data) {
+          if (data.type === 'stats') workletStats.push(data);
+          thisNodePort?.onmessage?.({data});
+        },
       };
+      const thisNodePort = this.port;
       this.processor = new processorClass();
       nodes.push(this);
     }
@@ -202,18 +208,25 @@ export async function createPlaybackRuntime(options = {}) {
     }
   }, 3);
 
+  scheduler.setInterval(() => {
+    renderedQuantumCount += nodes.filter(node => node.connected && node.context.state === 'running').length;
+  }, 3);
+
   return {
     messages, pcmMessages, workletStats, dispatch,
+    emitWorkletStats(stats) {newProcessorPort?.dispatch(stats);},
+    get renderedQuantumCount() {return renderedQuantumCount;},
     get outputGain() {return nodes.at(-1)?.parameters.get('outputGain')?.value;},
     get gainAutomation() {return nodes.at(-1)?.parameters.get('outputGain')?.events ?? [];},
     elapseIdle(ms) {idleOffsetMs += ms;},
-    start(generation, requestId, media = 'A', tabId = 1) {
+    start(generation, requestId, media = 'A', tabId = 1, playbackState = {}) {
       const request = {
         target: 'offscreen', type: 'start', requestId, tabId, generation,
         pageUrl: `https://www.bilibili.com/video/BV${media}/`,
         mediaKey: {bvid: `BV${media}`, aid: media, cid: media},
         candidate: {id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000, baseUrl: 'https://media.bilivideo.com/audio.m4s', backupUrls: []},
-        videoTimeSamples: 0, dialnorm: 'unity', renderer: 'stereo',
+        videoTimeSamples: 0, paused: playbackState.paused ?? false, buffering: playbackState.buffering ?? false,
+        dialnorm: 'unity', renderer: 'stereo',
       };
       dispatch(request);
       return request;

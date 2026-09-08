@@ -227,7 +227,7 @@ function dispatchStartRequest(): boolean {
   activeStartRequestId = crypto.randomUUID();
   startHandshake = recordStartAttempt(startHandshake, performance.now());
   traceLifecycle('start-attempt', {attempt: startHandshake.attempts, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE))});
-  send({target: 'background', type: 'start', requestId: activeStartRequestId, pageUrl: location.href, mediaKey: manifest.mediaKey, candidates: manifest.candidates, generation: videoGeneration, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE)), dialnorm: dialnormMode, renderer: rendererMode, gainDb: outputGainDb});
+  send({target: 'background', type: 'start', requestId: activeStartRequestId, pageUrl: location.href, mediaKey: manifest.mediaKey, candidates: manifest.candidates, generation: videoGeneration, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE)), paused: currentVideo.paused, buffering: currentVideo.readyState < 3, dialnorm: dialnormMode, renderer: rendererMode, gainDb: outputGainDb});
   emitClock();
   return true;
 }

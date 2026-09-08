@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-import {advanceSyncState, computeSyncAction, createDriftMetrics, createSyncState, recordDriftSample, resumeAudioPhase, type SyncEvent} from '../src/sync-state.js';
+import {advanceSyncState, computeSyncAction, createDriftMetrics, createSyncState, recordDriftSample, resumeAudioPhase, shouldResyncForAudioLead, type SyncEvent} from '../src/sync-state.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -49,6 +49,10 @@ function run(): void {
   assert(resumeAudioPhase('paused', {isJocConfirmed: false, isNativeMuted: false}) === 'preparing', 'resume returns unconfirmed playback to preparing');
   assert(resumeAudioPhase('paused', {isJocConfirmed: true, isNativeMuted: false}) === 'ready', 'resume returns confirmed unmuted playback to ready');
   assert(resumeAudioPhase('paused', {isJocConfirmed: true, isNativeMuted: true}) === 'active', 'resume returns muted playback to active');
+  assert(resumeAudioPhase('ready', {isJocConfirmed: true, isNativeMuted: true}) === 'active', 'resume activates a confirmed stream that became ready while paused');
+  assert(shouldResyncForAudioLead(120_000, 0), 'large positive audio lead requests a resync');
+  assert(!shouldResyncForAudioLead(90_000, 0), 'normal audio lead stays within the resync threshold');
+  assert(!shouldResyncForAudioLead(null, 0), 'missing audio position cannot request a resync');
 }
 
 run();

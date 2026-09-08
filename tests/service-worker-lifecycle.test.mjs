@@ -190,3 +190,32 @@ test('a clock from an obsolete request cannot advance or restart the replacement
   await new Promise(setImmediate);
   assert.equal(background.sent.at(-1)?.type, 'clock');
 });
+
+test('a delayed running clock cannot arrive after a newer paused clock', async () => {
+  let contextCall = 0;
+  const releases = [];
+  const background = await createBackground({getContexts(exists) {
+    if (contextCall++ === 0) return exists ? [{}] : [];
+    return new Promise(resolve => {releases.push(resolve);});
+  }});
+  const start = startMessage(1, 'ordered-clock');
+  background.activate('document');
+  background.dispatch(start, 'document');
+  await waitFor(() => background.sent.some(m => m.requestId === start.requestId), 'initial session');
+
+  const clock = {buffering: false, playbackRate: 1, expectedDisplayTimeMs: null};
+  background.dispatch({...start, ...clock, type: 'video-clock', paused: false, mediaTimeSamples: 48000}, 'document');
+  background.dispatch({...start, ...clock, type: 'video-clock', paused: true, mediaTimeSamples: 48000}, 'document');
+  await waitFor(() => releases.length >= 1, 'clock liveness checks');
+  if (releases.length >= 2) {
+    releases[1]([{}]);
+    await new Promise(setImmediate);
+    releases[0]([{}]);
+  } else {
+    releases[0]([{}]);
+    await waitFor(() => releases.length >= 2, 'serialized paused clock liveness check');
+    releases[1]([{}]);
+  }
+  await waitFor(() => background.sent.filter(m => m.type === 'clock').length === 2, 'both clocks to reach offscreen');
+  assert.equal(background.sent.filter(m => m.type === 'clock').at(-1)?.paused, true);
+});

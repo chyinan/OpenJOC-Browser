@@ -5,7 +5,7 @@ import {parseCmafFragment, type CmafSample, type CmafSegmentReference} from './c
 import {selectCmafSegmentWindow} from './cmaf-window.js';
 import {isRuntimeMessage, type MediaKey, type PlaybackMetrics, type RuntimeMessage} from './extension-protocol.js';
 import {sanitizeMediaUrl} from './media-url-policy.js';
-import {createDriftMetrics, recordDriftSample, resumeAudioPhase, type DriftMetrics} from './sync-state.js';
+import {createDriftMetrics, recordDriftSample, resumeAudioPhase, shouldResyncForAudioLead, type DriftMetrics} from './sync-state.js';
 import {advanceDecoderProgressWatchdog, createDecoderProgressWatchdog, hasDecoderMadeProgress, type DecoderProgressWatchdog} from './decode-progress.js';
 import {estimateMediaTimeSamples} from './video-clock-estimate.js';
 import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
@@ -503,7 +503,7 @@ function validatePageRangeResponse(response: PageRangeResponse, start: number, e
 async function startSession(request: StartRequest, token: number): Promise<void> {
   await stopSession(currentSession !== null && currentSession.request.tabId !== request.tabId);
   if (token !== latestStartToken || pendingStart?.token !== token) return;
-  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: 1, playerMuted: false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: false, isBuffering: false, phase: 'preparing', stage: 'starting-audio', preparationTimer: null};
+  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: 1, playerMuted: false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: request.paused, isBuffering: request.buffering, phase: request.buffering ? 'buffering' : request.paused ? 'paused' : 'preparing', stage: 'starting-audio', preparationTimer: null};
   currentSession = session;
   session.preparationTimer = window.setTimeout((): void => {
     if (isCurrentSession(session) && !session.isJocConfirmed) void failSession(`OpenJOC ${session.stage} timed out before JOC PCM became available`);
@@ -516,6 +516,7 @@ async function startSession(request: StartRequest, token: number): Promise<void>
   session.stage = 'starting-decoder';
   ensureWorker();
   resetAudio(session.audioGeneration);
+  audioNode?.port.postMessage({type: 'clock', generation: session.audioGeneration, mediaTimeSamples: request.videoTimeSamples, paused: session.isPaused, buffering: session.isBuffering});
   applyOutputGain(session, true);
   await context.resume();
   sendStatus('preparing', null, session);
@@ -624,6 +625,10 @@ function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type
   if (session === null || message.tabId !== session.request.tabId || message.generation !== session.request.generation) return;
   if (message.playbackRate !== 1) {
     void failSession('unsupported playback rate');
+    return;
+  }
+  if (shouldResyncForAudioLead(latestWorkletStats.currentAudioMediaSamples, message.mediaTimeSamples)) {
+    enqueueStartSession({...session.request, videoTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
     return;
   }
   latestVideoMediaSamples = message.mediaTimeSamples;

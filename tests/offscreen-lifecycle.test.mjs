@@ -81,6 +81,42 @@ test('resuming after two idle minutes does not expire an intentionally paused de
   }
 });
 
+test('an already paused start keeps the audio worklet silent until the video resumes', async () => {
+  const runtime = await createPlaybackRuntime({autoReady: false});
+  try {
+    runtime.start(1, 'paused-start', 'A', 1, {paused: true});
+    await waitFor(() => runtime.messages.some(message => message.requestId === 'paused-start' && message.phase === 'ready'), 'paused startup to become ready');
+    runtime.dispatch({target: 'offscreen', type: 'native-muted', tabId: 1, generation: 1});
+    await waitFor(() => runtime.messages.some(message => message.requestId === 'paused-start' && message.phase === 'paused'), 'paused startup to remain paused');
+    await waitFor(() => runtime.renderedQuantumCount >= 40, 'paused worklet render quanta');
+    assert.equal(runtime.workletStats.at(-1)?.playedQuantumCount, 0);
+    runtime.dispatch({target: 'offscreen', type: 'clock', tabId: 1, generation: 1, mediaTimeSamples: 0, paused: false, buffering: false, playbackRate: 1, expectedDisplayTimeMs: null});
+    await waitFor(() => runtime.messages.some(message => message.requestId === 'paused-start' && message.phase === 'active'), 'resumed worklet playback');
+    await waitFor(() => runtime.workletStats.some(stats => stats.generation === 1 && stats.playedQuantumCount > 0), 'resumed worklet output');
+  } finally {
+    runtime.close();
+  }
+});
+
+test('an excessive audio lead is rebuilt from the next authoritative video clock', async () => {
+  const runtime = await createPlaybackRuntime();
+  try {
+    runtime.start(1, 'lead-recovery');
+    await runtime.active('lead-recovery');
+    const previousAudioGeneration = runtime.workletStats.at(-1)?.generation;
+    assert.ok(previousAudioGeneration !== undefined);
+    const previousStats = runtime.workletStats.at(-1);
+    runtime.emitWorkletStats({...previousStats, currentAudioMediaSamples: 120_000, driftMs: 2_500});
+    await new Promise(resolve => queueMicrotask(resolve));
+    assert.equal(runtime.messages.at(-1)?.metrics.driftMs, 2_500);
+    const preparingCount = runtime.messages.filter(message => message.requestId === 'lead-recovery' && message.phase === 'preparing').length;
+    runtime.dispatch({target: 'offscreen', type: 'clock', tabId: 1, generation: 1, mediaTimeSamples: 0, paused: true, buffering: false, playbackRate: 1, expectedDisplayTimeMs: null});
+    await waitFor(() => runtime.messages.filter(message => message.requestId === 'lead-recovery' && message.phase === 'preparing').length > preparingCount, 'new preparation after excessive lead', 2_000);
+  } finally {
+    runtime.close();
+  }
+});
+
 test('a new tab retires the old tab and rejects its clock even when page generations match', async () => {
   const runtime = await createPlaybackRuntime();
   try {
