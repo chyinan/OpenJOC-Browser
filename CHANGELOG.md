@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2] - 2026-09-09
+
+### Fixed
+
+- Prevented stale background playback clocks from restarting paused audio and accumulating delay.
+- Preserved paused/buffering state during startup and rebuilt playback when audio drifted more than two seconds ahead of the video clock.
+
 ## [0.1.1] - 2026-09-08
 
 ### Changed
