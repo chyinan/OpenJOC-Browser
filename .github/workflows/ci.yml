@@ -44,8 +44,15 @@ jobs:
       - name: Check license and notices
         run: npm run check:license
 
+      - name: Read package version
+        id: package-version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Check version consistency
-        run: npm run check:version -- 0.1.0
+        run: npm run check:version -- ${{ steps.package-version.outputs.version }}
 
       - name: Check OpenJOC WASM source
         run: npm run check:wasm
@@ -69,7 +76,7 @@ jobs:
         run: npm run cmaf-parity
 
       - name: Package release artifact
-        run: npm run package:release -- --version 0.1.0
+        run: npm run package:release -- --version ${{ steps.package-version.outputs.version }}
 
       - name: Validate release artifact
-        run: npm run validate:release -- --version 0.1.0
+        run: npm run validate:release -- --version ${{ steps.package-version.outputs.version }}
