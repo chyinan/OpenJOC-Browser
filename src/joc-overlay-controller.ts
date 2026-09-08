@@ -445,7 +445,7 @@ function renderGainControl(state: OverlayState): string {
   return `<section class="gain-setting" aria-label="自定义增益">
     <div class="gain-heading"><label for="openjoc-output-gain-range">自定义增益</label><div class="gain-value-control"><input id="openjoc-output-gain-value" class="gain-number" type="number" min="${OUTPUT_GAIN_MIN_DB}" max="${OUTPUT_GAIN_MAX_DB}" step="${OUTPUT_GAIN_STEP_DB}" value="${state.gainDb.toFixed(1)}" data-field="output-gain" aria-label="自定义增益数值" aria-describedby="openjoc-output-gain-help"><span>dB</span><button class="text-button gain-reset" type="button" data-action="reset-gain">重置</button></div></div>
     <input id="openjoc-output-gain-range" class="gain-range" type="range" min="${OUTPUT_GAIN_MIN_DB}" max="${OUTPUT_GAIN_MAX_DB}" step="${OUTPUT_GAIN_STEP_DB}" value="${state.gainDb}" data-field="output-gain" aria-valuetext="${gainLabel(state.gainDb)}" aria-describedby="openjoc-output-gain-help" style="--gain-progress:${gainProgress(state.gainDb)}%">
-    <div class="gain-limits" aria-hidden="true"><span>−12 dB</span><span>+12 dB</span></div>
+    <div class="gain-limits" aria-hidden="true"><span>−20 dB</span><span>+20 dB</span></div>
     <p class="field-help" id="openjoc-output-gain-help">0 dB 保持原音量，提升过高可能失真。</p>
   </section>`;
 }

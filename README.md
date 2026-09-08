@@ -64,7 +64,7 @@ See [installation](docs/installation.md) for permission details and limitations.
 5. Select **Calibrated** or **Unity / 兼容模式** under **节目电平**.
 6. If needed, open **高级** to inspect diagnostics or change **自定义增益**.
 
-**Calibrated** follows the programme Dialnorm metadata according to OpenJOC semantics. **Unity / 兼容模式** disables Dialnorm attenuation; it is not a volume boost. The custom gain control is separate and ranges from −12 dB to +12 dB in 0.5 dB steps.
+**Calibrated** follows the programme Dialnorm metadata according to OpenJOC semantics. **Unity / 兼容模式** disables Dialnorm attenuation; it is not a volume boost. The custom gain control is separate and ranges from −20 dB to +20 dB in 0.5 dB steps.
 
 OpenJOC takes over only after a non-empty in-band JOC profile and usable PCM are confirmed. If it is disabled or fails, the original Bilibili audio is restored with the latest player mute and volume settings.
 
@@ -187,7 +187,7 @@ Bilibili 页面
 5. 在 **节目电平** 下选择 **Calibrated** 或 **Unity / 兼容模式**。
 6. 如有需要，打开 **高级** 查看诊断信息或修改 **自定义增益**。
 
-**Calibrated** 按照 OpenJOC 的语义使用节目 Dialnorm 元数据。**Unity / 兼容模式** 会停用 Dialnorm 衰减，但不会提升音量。自定义增益控制独立生效，范围为 −12 dB 至 +12 dB，步进为 0.5 dB。
+**Calibrated** 按照 OpenJOC 的语义使用节目 Dialnorm 元数据。**Unity / 兼容模式** 会停用 Dialnorm 衰减，但不会提升音量。自定义增益控制独立生效，范围为 −20 dB 至 +20 dB，步进为 0.5 dB。
 
 只有在确认存在非空的带内 JOC 配置并获得可用 PCM 后，OpenJOC 才会接管播放。如果扩展被停用或发生故障，原始 Bilibili 音频会恢复，并沿用播放器最新的静音和音量设置。
 

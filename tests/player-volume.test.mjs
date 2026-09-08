@@ -51,13 +51,13 @@ test('player volume and mute control output independently of custom gain', async
     assert.ok(Math.abs(playback.outputGain - 0.25 * 10 ** (6 / 20)) < 1e-9);
     playback.dispatch({...control, muted: true, activate: false});
     assert.equal(playback.outputGain, 0);
-    playback.dispatch({target: 'offscreen', type: 'output-gain', requestId: 'volume', tabId: 1, generation: 1, gainDb: 12});
+    playback.dispatch({target: 'offscreen', type: 'output-gain', requestId: 'volume', tabId: 1, generation: 1, gainDb: 20});
     assert.equal(playback.outputGain, 0);
     playback.dispatch({...control, volume: 0.5, activate: false});
-    assert.ok(Math.abs(playback.outputGain - 0.5 * 10 ** (12 / 20)) < 1e-9);
+    assert.ok(Math.abs(playback.outputGain - 0.5 * 10 ** (20 / 20)) < 1e-9);
     playback.dispatch({...control, requestId: 'stale', volume: 1});
     playback.dispatch({...control, tabId: 2, volume: 1});
-    assert.ok(Math.abs(playback.outputGain - 0.5 * 10 ** (12 / 20)) < 1e-9);
+    assert.ok(Math.abs(playback.outputGain - 0.5 * 10 ** (20 / 20)) < 1e-9);
   } finally {playback.close();}
 });
 

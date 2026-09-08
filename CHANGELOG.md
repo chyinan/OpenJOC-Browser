@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.1] - 2026-09-08
+
+### Changed
+
+- Expanded the custom output gain range from −12 dB to +12 dB to −20 dB to +20 dB, retaining 0.5 dB steps.
+
 ## [0.1.0] - 2026-09-07
 
 First public GitHub release preparation.

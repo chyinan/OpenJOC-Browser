@@ -1,7 +1,7 @@
 // pattern: Functional Core
 
-export const OUTPUT_GAIN_MIN_DB = -12;
-export const OUTPUT_GAIN_MAX_DB = 12;
+export const OUTPUT_GAIN_MIN_DB = -20;
+export const OUTPUT_GAIN_MAX_DB = 20;
 export const OUTPUT_GAIN_STEP_DB = 0.5;
 export const OUTPUT_GAIN_DEFAULT_DB = 0;
 export const OUTPUT_GAIN_MAX_AMPLITUDE = 10 ** (OUTPUT_GAIN_MAX_DB / 20);

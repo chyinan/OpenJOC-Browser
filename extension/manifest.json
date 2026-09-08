@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "OpenJOC Browser",
   "short_name": "OpenJOC",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local E-AC-3 JOC playback for standard Bilibili VOD in Chromium.",
   "icons": {
     "16": "icons/icon-16.png",

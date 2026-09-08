@@ -24,7 +24,7 @@ Binaural uses a fixed virtual 7.1.4 layout and the built-in SADIE II D1 (KU100) 
 
 ## Custom output gain
 
-Open **高级** and use **自定义增益** for a separate output gain from −12 dB to +12 dB in 0.5 dB steps. The default is 0 dB. The setting is applied after rendering and is saved locally. Positive gain can clip already-loud material.
+Open **高级** and use **自定义增益** for a separate output gain from −20 dB to +20 dB in 0.5 dB steps. The default is 0 dB. The setting is applied after rendering and is saved locally. Positive gain can clip already-loud material.
 
 ## Diagnostics
 

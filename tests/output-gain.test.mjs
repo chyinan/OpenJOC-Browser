@@ -7,20 +7,23 @@ import {createPlaybackRuntime, createSourceRuntime} from './helpers/extension-ru
 test('gain policy defaults to zero and constrains saved or typed values to half-dB steps', async () => {
   const gain = await createSourceRuntime().load('output-gain.js');
   for (const value of [null, undefined, '', '6', NaN, Infinity]) assert.equal(gain.normalizeOutputGainDb(value), 0);
-  assert.equal(gain.normalizeOutputGainDb(-30), -12);
-  assert.equal(gain.normalizeOutputGainDb(30), 12);
+  assert.equal(gain.normalizeOutputGainDb(-30), -20);
+  assert.equal(gain.normalizeOutputGainDb(30), 20);
   assert.equal(gain.normalizeOutputGainDb(6.26), 6.5);
   assert.equal(gain.gainDbToAmplitude(0), 1);
-  assert.ok(Math.abs(gain.gainDbToAmplitude(12) - 3.9810717055) < 1e-9);
-  assert.ok(Math.abs(gain.gainDbToAmplitude(-12) - 0.2511886432) < 1e-9);
+  assert.ok(Math.abs(gain.gainDbToAmplitude(20) - 10) < 1e-9);
+  assert.ok(Math.abs(gain.gainDbToAmplitude(-20) - 0.1) < 1e-9);
 });
 
 test('gain messages are bounded and tied to the current playback request', async () => {
   const {isRuntimeMessage} = await createSourceRuntime().load('extension-protocol.js');
   const message = {target: 'background', type: 'output-gain', requestId: 'current', generation: 1, gainDb: 6};
   assert.ok(isRuntimeMessage(message));
+  assert.ok(isRuntimeMessage({...message, gainDb: -20}));
+  assert.ok(isRuntimeMessage({...message, gainDb: 20}));
   assert.ok(isRuntimeMessage({...message, target: 'offscreen', tabId: 1}));
-  assert.equal(isRuntimeMessage({...message, gainDb: 13}), false);
+  assert.equal(isRuntimeMessage({...message, gainDb: 21}), false);
+  assert.equal(isRuntimeMessage({...message, gainDb: -21}), false);
   assert.equal(isRuntimeMessage({...message, gainDb: NaN}), false);
   assert.equal(isRuntimeMessage({...message, requestId: ''}), false);
 });
@@ -113,6 +116,8 @@ test('explicit reset saves zero even when the gain control still shows its initi
   const action = new Element(); action.dataset.action = 'open-diagnostics';
   panel.events.get('click')({target: action});
   assert.match(panel.innerHTML, /data-action="reset-gain"/);
+  assert.match(panel.innerHTML, /min="-20" max="20"/);
+  assert.match(panel.innerHTML, /−20 dB.*\+20 dB/);
   action.dataset.action = 'reset-gain';
   panel.events.get('click')({target: action});
   assert.deepEqual(saved, [0], 'reset must notify persistence even before a delayed saved setting is restored');
