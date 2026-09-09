@@ -5,7 +5,7 @@ import {parseCmafFragment, type CmafSample, type CmafSegmentReference} from './c
 import {selectCmafSegmentWindow} from './cmaf-window.js';
 import {isRuntimeMessage, type MediaKey, type PlaybackMetrics, type RuntimeMessage} from './extension-protocol.js';
 import {sanitizeMediaUrl} from './media-url-policy.js';
-import {createDriftMetrics, recordDriftSample, resumeAudioPhase, shouldResyncForAudioLead, type DriftMetrics} from './sync-state.js';
+import {createDriftMetrics, recordDriftSample, resumeAudioPhase, shouldResyncForAudioLead, shouldResyncForVideoLag, type DriftMetrics} from './sync-state.js';
 import {advanceDecoderProgressWatchdog, createDecoderProgressWatchdog, hasDecoderMadeProgress, type DecoderProgressWatchdog} from './decode-progress.js';
 import {estimateMediaTimeSamples} from './video-clock-estimate.js';
 import {type DecoderWorkerStatus, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
@@ -17,6 +17,7 @@ const MAX_SEGMENTS_PER_WINDOW = 2;
 const PUMP_THRESHOLD_SAMPLES = SAMPLE_RATE * 4;
 const PREFETCH_INTERVAL_MS = 250;
 const VIDEO_CLOCK_STALE_AFTER_MS = 350;
+const WORKLET_PREFETCH_LOW_WATER_MS = 2_000;
 const PREPARATION_TIMEOUT_MS = 30_000;
 const DECODER_PROGRESS_TIMEOUT_MS = 10_000;
 
@@ -207,6 +208,7 @@ async function ensureAudio(): Promise<AudioContext> {
         worker?.postMessage({type: 'queue-stats', generation: event.data.generation, queuedAudioMs: event.data.queuedAudioMs, acceptedSequence: event.data.acceptedSequence} satisfies WorkerCommand);
         if (event.data.driftMs !== null) driftMetrics = recordDriftSample(driftMetrics, event.data.driftMs);
         sendStatus(currentSession.phase, null, currentSession);
+        pumpFromWorkletQueue();
       } else if (isRecord(event.data) && event.data.type === 'error' && typeof event.data.message === 'string') {
         void failSession(event.data.message);
       }
@@ -350,7 +352,9 @@ function handleWorkerMessage(message: WorkerMessage): void {
         window.clearTimeout(session.preparationTimer);
         session.preparationTimer = null;
       }
-      if (!session.isNativeMuted && (session.phase === 'preparing' || session.phase === 'paused' || session.phase === 'buffering')) {
+      if (session.isNativeMuted && !session.isPaused && !session.isBuffering) {
+        session.phase = 'active';
+      } else if (!session.isNativeMuted && (session.phase === 'preparing' || session.phase === 'paused' || session.phase === 'buffering')) {
         session.phase = 'ready';
         sendStatus('ready', null, session);
       }
@@ -418,6 +422,12 @@ function pumpFromEstimatedVideoClock(): void {
   }
   if (session.index === null || session.isStreaming || session.nextReferenceIndex >= session.index.index.references.length) return;
   if (estimatedVideo + PUMP_THRESHOLD_SAMPLES >= session.windowEndSamples) void pumpSegments(session);
+}
+
+function pumpFromWorkletQueue(): void {
+  const session = currentSession;
+  if (session === null || session.isPaused || session.isBuffering || session.index === null || session.isStreaming || session.nextReferenceIndex >= session.index.index.references.length) return;
+  if (latestWorkletStats.queuedAudioMs <= WORKLET_PREFETCH_LOW_WATER_MS) void pumpSegments(session);
 }
 
 async function fetchIndexWithFallback(
@@ -501,9 +511,20 @@ function validatePageRangeResponse(response: PageRangeResponse, start: number, e
 }
 
 async function startSession(request: StartRequest, token: number): Promise<void> {
+  const previous = currentSession;
+  const isSamePlaybackRequest = previous !== null
+    && previous.request.tabId === request.tabId
+    && previous.request.requestId === request.requestId
+    && previous.request.generation === request.generation
+    && mediaKeyEquals(previous.request.mediaKey, request.mediaKey);
+  const preservedPlayerState = isSamePlaybackRequest ? {
+    playerVolume: previous.playerVolume,
+    playerMuted: previous.playerMuted,
+    isNativeMuted: previous.isNativeMuted,
+  } : null;
   await stopSession(currentSession !== null && currentSession.request.tabId !== request.tabId);
   if (token !== latestStartToken || pendingStart?.token !== token) return;
-  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: 1, playerMuted: false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: false, isJocConfirmed: false, isPaused: request.paused, isBuffering: request.buffering, phase: request.buffering ? 'buffering' : request.paused ? 'paused' : 'preparing', stage: 'starting-audio', preparationTimer: null};
+  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: preservedPlayerState?.playerVolume ?? 1, playerMuted: preservedPlayerState?.playerMuted ?? false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: preservedPlayerState?.isNativeMuted ?? false, isJocConfirmed: false, isPaused: request.paused, isBuffering: request.buffering, phase: request.buffering ? 'buffering' : request.paused ? 'paused' : 'preparing', stage: 'starting-audio', preparationTimer: null};
   currentSession = session;
   session.preparationTimer = window.setTimeout((): void => {
     if (isCurrentSession(session) && !session.isJocConfirmed) void failSession(`OpenJOC ${session.stage} timed out before JOC PCM became available`);
@@ -518,6 +539,7 @@ async function startSession(request: StartRequest, token: number): Promise<void>
   resetAudio(session.audioGeneration);
   audioNode?.port.postMessage({type: 'clock', generation: session.audioGeneration, mediaTimeSamples: request.videoTimeSamples, paused: session.isPaused, buffering: session.isBuffering});
   applyOutputGain(session, true);
+  if (session.isNativeMuted) audioNode?.port.postMessage({type: 'arm', generation: session.audioGeneration});
   await context.resume();
   sendStatus('preparing', null, session);
   try {
@@ -628,6 +650,11 @@ function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type
     return;
   }
   if (shouldResyncForAudioLead(latestWorkletStats.currentAudioMediaSamples, message.mediaTimeSamples)) {
+    enqueueStartSession({...session.request, videoTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
+    return;
+  }
+  const elapsedSinceVideoClockMs = Math.max(0, performance.now() - lastVideoClockAtMs);
+  if (shouldResyncForVideoLag({audioMediaSamples: latestWorkletStats.currentAudioMediaSamples, videoMediaSamples: message.mediaTimeSamples, elapsedSinceVideoClockMs, staleAfterMs: VIDEO_CLOCK_STALE_AFTER_MS})) {
     enqueueStartSession({...session.request, videoTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
     return;
   }

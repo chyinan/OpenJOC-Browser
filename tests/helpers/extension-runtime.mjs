@@ -72,9 +72,11 @@ export async function createPlaybackRuntime(options = {}) {
   let processorClass;
   let newProcessorPort;
   let idleOffsetMs = 0;
+  let areWindowIntervalsSuspended = options.windowIntervalsSuspended === true;
+  const accessUnitsPerSegment = options.accessUnitsPerSegment ?? 64;
   const fixture = readFileSync(new URL('../../fixtures/joc.lifecycle.ec3', import.meta.url));
   const wasm = readFileSync(new URL('../../extension/wasm/openjoc_wasm.wasm', import.meta.url));
-  const references = Array.from({length: options.segments ?? 2}, (_, index) => ({ptsSamples: index * 64 * 1536, durationSamples: 64 * 1536}));
+  const references = Array.from({length: options.segments ?? 2}, (_, index) => ({ptsSamples: index * accessUnitsPerSegment * 1536, durationSamples: accessUnitsPerSegment * 1536}));
 
   const scheduler = {
     setTimeout(fn, ms) {
@@ -85,6 +87,10 @@ export async function createPlaybackRuntime(options = {}) {
     clearTimeout(id) {clearTimeout(id); timers.delete(id);},
     setInterval(fn, ms) {const id = setInterval(fn, ms); timers.add(id); return id;},
     clearInterval(id) {clearInterval(id); timers.delete(id);},
+  };
+  const windowScheduler = {
+    ...scheduler,
+    setInterval(fn, ms) {return scheduler.setInterval(() => {if (!areWindowIntervalsSuspended) fn();}, ms);},
   };
 
   const worklet = createSourceRuntime({
@@ -171,7 +177,7 @@ export async function createPlaybackRuntime(options = {}) {
   }
 
   const runtime = createSourceRuntime({
-    ...scheduler, window: scheduler, Worker: TestWorker,
+    ...scheduler, window: windowScheduler, Worker: TestWorker,
     performance: {now: () => performance.now() + idleOffsetMs},
     AudioContext: TestAudioContext, AudioWorkletNode: TestAudioWorkletNode,
     chrome: {runtime: {
@@ -192,7 +198,7 @@ export async function createPlaybackRuntime(options = {}) {
       },
       async fetchCmafSegment(_session, reference) {
         const first = reference.ptsSamples / 1536;
-        return Array.from({length: 64}, (_, index) => ({
+        return Array.from({length: accessUnitsPerSegment}, (_, index) => ({
           ptsSamples: (first + index) * 1536,
           bytes: new Uint8Array(fixture.subarray(((first + index) % 128) * 4096, (((first + index) % 128) + 1) * 4096)),
         }));
@@ -219,6 +225,8 @@ export async function createPlaybackRuntime(options = {}) {
     get outputGain() {return nodes.at(-1)?.parameters.get('outputGain')?.value;},
     get gainAutomation() {return nodes.at(-1)?.parameters.get('outputGain')?.events ?? [];},
     elapseIdle(ms) {idleOffsetMs += ms;},
+    suspendWindowIntervals() {areWindowIntervalsSuspended = true;},
+    resumeWindowIntervals() {areWindowIntervalsSuspended = false;},
     start(generation, requestId, media = 'A', tabId = 1, playbackState = {}) {
       const request = {
         target: 'offscreen', type: 'start', requestId, tabId, generation,

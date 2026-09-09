@@ -10,6 +10,12 @@
 
 `src/pcm-processor.ts` advances its master media clock only while not paused/buffering. Its reported drift is the queued/current audio media sample position minus that master clock. Audio that continues while the video is paused therefore appears as positive drift approximately equal to the unintended playback duration.
 
+When a background tab suppresses page clock updates and the next foreground clock jumps far ahead of the queued audio, the same timestamped queue reports a large negative drift and waits indefinitely for old PCM to catch up. `src/offscreen.ts` now rebuilds the current session only when the authoritative page clock has also been stale beyond the background threshold; a recent foreground clock never rebuilds merely because the current CMAF segment begins more than two seconds before the video target. Same-request rebuilds preserve native-audio takeover, player volume/mute, and output gain, then re-arm the new AudioWorklet generation; otherwise the content controller would not send a second takeover acknowledgement and the rebuilt session would remain in `ready`/“waiting for audio”.
+
+Live Edge diagnosis reproduced the bad predicate as a one-second `active → preparing → active` loop on the same request ID during initial playback. After gating video-lag recovery on stale page-clock age, a fresh Edge page remained active with approximately -19 ms sync drift and non-empty loudness instead of cycling through “waiting for data”.
+
+Minimizing Edge can suspend or heavily throttle the offscreen document's window timers while the AudioWorklet render thread remains active. Prefetch therefore also runs from accepted Worklet stats: when the PCM queue falls to a two-second low-water mark, the offscreen shell pumps the next bounded CMAF window. This keeps background decoding alive without depending on `setInterval` delivery and remains disabled while paused or buffering.
+
 ## Regression evidence
 
 `tests/service-worker-lifecycle.test.mjs` now reproduces a delayed running clock completing after a newer paused clock. Before the fix, the offscreen message order ends in `paused:false`.

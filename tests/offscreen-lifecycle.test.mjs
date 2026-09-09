@@ -117,6 +117,53 @@ test('an excessive audio lead is rebuilt from the next authoritative video clock
   }
 });
 
+test('a large foreground video jump rebuilds audio from the current video position', async () => {
+  const runtime = await createPlaybackRuntime({autoReady: false, segments: 20});
+  try {
+    runtime.start(1, 'foreground-jump');
+    await waitFor(() => runtime.messages.some(message => message.requestId === 'foreground-jump' && message.phase === 'ready'), 'initial foreground-jump readiness');
+    runtime.dispatch({target: 'offscreen', type: 'native-muted', tabId: 1, generation: 1});
+    await runtime.active('foreground-jump');
+    const preparingCount = runtime.messages.filter(message => message.requestId === 'foreground-jump' && message.phase === 'preparing').length;
+    const activeCount = runtime.messages.filter(message => message.requestId === 'foreground-jump' && message.phase === 'active').length;
+    runtime.elapseIdle(24_000);
+    runtime.dispatch({target: 'offscreen', type: 'clock', tabId: 1, generation: 1, mediaTimeSamples: 24 * 48000, paused: false, buffering: false, playbackRate: 1, expectedDisplayTimeMs: null});
+    await waitFor(() => runtime.messages.filter(message => message.requestId === 'foreground-jump' && message.phase === 'preparing').length > preparingCount, 'audio restart after a large foreground video jump');
+    await waitFor(() => runtime.messages.filter(message => message.requestId === 'foreground-jump' && message.phase === 'active').length > activeCount, 'audio reactivation without a second native mute acknowledgement', 2_000);
+  } finally {
+    runtime.close();
+  }
+});
+
+test('a recent foreground clock does not rebuild for normal CMAF segment offset', async () => {
+  const runtime = await createPlaybackRuntime();
+  try {
+    runtime.start(1, 'recent-clock');
+    await runtime.active('recent-clock');
+    const previousStats = runtime.workletStats.at(-1);
+    assert.ok(previousStats !== undefined);
+    runtime.emitWorkletStats({...previousStats, currentAudioMediaSamples: 0, driftMs: -2_500});
+    await new Promise(resolve => queueMicrotask(resolve));
+    const preparingCount = runtime.messages.filter(message => message.requestId === 'recent-clock' && message.phase === 'preparing').length;
+    runtime.dispatch({target: 'offscreen', type: 'clock', tabId: 1, generation: 1, mediaTimeSamples: 120_000, paused: false, buffering: false, playbackRate: 1, expectedDisplayTimeMs: null});
+    await new Promise(setImmediate);
+    assert.equal(runtime.messages.filter(message => message.requestId === 'recent-clock' && message.phase === 'preparing').length, preparingCount);
+  } finally {
+    runtime.close();
+  }
+});
+
+test('AudioWorklet status drives prefetch while minimized-window timers are suspended', async () => {
+  const runtime = await createPlaybackRuntime({segments: 10, accessUnitsPerSegment: 8, windowIntervalsSuspended: true});
+  try {
+    runtime.start(1, 'minimized-prefetch');
+    await runtime.active('minimized-prefetch');
+    await waitFor(() => runtime.pcmMessages.length > 16, 'worklet-driven prefetch beyond the initial two-segment window', 2_000);
+  } finally {
+    runtime.close();
+  }
+});
+
 test('a new tab retires the old tab and rejects its clock even when page generations match', async () => {
   const runtime = await createPlaybackRuntime();
   try {

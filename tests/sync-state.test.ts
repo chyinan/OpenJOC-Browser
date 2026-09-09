@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-import {advanceSyncState, computeSyncAction, createDriftMetrics, createSyncState, recordDriftSample, resumeAudioPhase, shouldResyncForAudioLead, type SyncEvent} from '../src/sync-state.js';
+import {advanceSyncState, computeSyncAction, createDriftMetrics, createSyncState, recordDriftSample, resumeAudioPhase, shouldResyncForAudioLead, shouldResyncForVideoLag, type SyncEvent} from '../src/sync-state.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -53,6 +53,10 @@ function run(): void {
   assert(shouldResyncForAudioLead(120_000, 0), 'large positive audio lead requests a resync');
   assert(!shouldResyncForAudioLead(90_000, 0), 'normal audio lead stays within the resync threshold');
   assert(!shouldResyncForAudioLead(null, 0), 'missing audio position cannot request a resync');
+  assert(shouldResyncForVideoLag({audioMediaSamples: 0, videoMediaSamples: 120_000, elapsedSinceVideoClockMs: 500, staleAfterMs: 350}), 'large video lead after a stale page clock requests a resync');
+  assert(!shouldResyncForVideoLag({audioMediaSamples: 0, videoMediaSamples: 120_000, elapsedSinceVideoClockMs: 100, staleAfterMs: 350}), 'a recent foreground clock lets the worklet trim normal segment offset');
+  assert(!shouldResyncForVideoLag({audioMediaSamples: 0, videoMediaSamples: 90_000, elapsedSinceVideoClockMs: 500, staleAfterMs: 350}), 'normal video lead stays within the resync threshold');
+  assert(!shouldResyncForVideoLag({audioMediaSamples: null, videoMediaSamples: 120_000, elapsedSinceVideoClockMs: 500, staleAfterMs: 350}), 'missing audio position cannot request a video-lag resync');
 }
 
 run();

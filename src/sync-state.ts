@@ -38,6 +38,13 @@ export type ResumeAudioPhaseOptions = Readonly<{
   readonly isNativeMuted: boolean;
 }>;
 
+export type VideoLagResyncOptions = Readonly<{
+  readonly audioMediaSamples: number | null;
+  readonly videoMediaSamples: number;
+  readonly elapsedSinceVideoClockMs: number;
+  readonly staleAfterMs: number;
+}>;
+
 const SYNC_TOLERANCE_SAMPLES = 2_400;
 const MAX_DRIFT_SAMPLES = 256;
 const AUDIO_LEAD_RESYNC_THRESHOLD_SAMPLES = 2 * 48_000;
@@ -159,4 +166,15 @@ export function shouldResyncForAudioLead(audioMediaSamples: number | null, video
   if (!Number.isSafeInteger(audioMediaSamples) || audioMediaSamples < 0) throw new Error('audio media samples are invalid');
   if (!Number.isSafeInteger(videoMediaSamples) || videoMediaSamples < 0) throw new Error('video media samples are invalid');
   return audioMediaSamples - videoMediaSamples > AUDIO_LEAD_RESYNC_THRESHOLD_SAMPLES;
+}
+
+/** Returns whether the video master has jumped too far ahead of queued audio to wait. */
+export function shouldResyncForVideoLag(options: VideoLagResyncOptions): boolean {
+  const {audioMediaSamples, videoMediaSamples, elapsedSinceVideoClockMs, staleAfterMs} = options;
+  if (audioMediaSamples === null) return false;
+  if (!Number.isSafeInteger(audioMediaSamples) || audioMediaSamples < 0) throw new Error('audio media samples are invalid');
+  if (!Number.isSafeInteger(videoMediaSamples) || videoMediaSamples < 0) throw new Error('video media samples are invalid');
+  if (!Number.isFinite(elapsedSinceVideoClockMs) || elapsedSinceVideoClockMs < 0) throw new Error('elapsed video clock time is invalid');
+  if (!Number.isFinite(staleAfterMs) || staleAfterMs <= 0) throw new Error('video clock stale threshold is invalid');
+  return elapsedSinceVideoClockMs >= staleAfterMs && videoMediaSamples - audioMediaSamples > AUDIO_LEAD_RESYNC_THRESHOLD_SAMPLES;
 }
