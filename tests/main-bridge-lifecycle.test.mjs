@@ -16,6 +16,12 @@ async function createBridge(options = {}) {
   let listener;
   let scan;
   let response = options.response ?? (() => new Response(JSON.stringify(joc)));
+  const bridgeDebug = {dataset: {}};
+  let resourceObserver;
+  class TestPerformanceObserver {
+    constructor(callback) {resourceObserver = callback;}
+    observe() {}
+  }
   const page = {
     __INITIAL_STATE__: {videoData: {bvid: 'BVA', aid: 'A', cid: 'A'}},
     __playinfo__: options.hasPayload === false ? undefined : options.payload ?? joc,
@@ -24,8 +30,9 @@ async function createBridge(options = {}) {
     postMessage(message) {emitted.push(message);},
   };
   const runtime = createSourceRuntime({
-    window: page, location,
-    performance: {getEntriesByType: () => resources.map(name => ({name}))},
+    window: page, location, document: {documentElement: bridgeDebug},
+    PerformanceObserver: TestPerformanceObserver,
+    performance: {now: () => 0, getEntriesByType: () => resources.map(name => ({name}))},
     async fetch(url, init) {fetched.push(String(url)); return response(String(url), init);},
   });
   await runtime.load('bilibili-main-bridge.js');
@@ -39,17 +46,69 @@ async function createBridge(options = {}) {
     },
     changeRouteOnly(id) {location.href = `https://www.bilibili.com/video/BV${id}/`;},
     setResources(values) {resources = values;},
+    emitResource(name) {resourceObserver?.({getEntries: () => [{name}]});},
     setPart(part) {location.href = `${location.href.split('?')[0]}?p=${part}`;},
     respondWith(callback) {response = callback;},
     scan() {scan();},
     force() {listener({source: page, data: {source: 'openjoc-content', type: 'request-manifest'}});},
     range(url) {listener({source: page, data: {source: 'openjoc-content', type: 'fetch-media-range', requestId: 'range-1', url, start: 0, end: 1}});},
+    debug() {return JSON.parse(bridgeDebug.dataset.openjocBridgeDebug);},
   };
 }
 
 test('initial JOC bootstrap remains available without a playurl resource entry', async () => {
   const bridge = await createBridge();
   assert.ok(bridge.emitted.some(message => message.type === 'manifest' && message.mediaKey.bvid === 'BVA'));
+});
+
+test('the bridge exposes its current identity and manifest lookup state for field debugging', async () => {
+  const bridge = await createBridge();
+  const debug = bridge.debug();
+  assert.equal(debug.pageIdentity, 'BVA:A:A');
+  assert.equal(debug.resolvedManifestIdentity, 'BVA:A:A');
+  assert.equal(debug.resolvedCandidateCount, 1);
+  assert.ok(Array.isArray(debug.trace));
+});
+
+test('bridge field debugging preserves meaningful events and exposes sanitized playurl matches', async () => {
+  const bridge = await createBridge({resources: [playurl('A')]});
+  await new Promise(setImmediate);
+  for (let index = 0; index < 35; index += 1) bridge.scan();
+  const debug = bridge.debug();
+  assert.ok(debug.trace.some(event => event.event === 'emit'), 'periodic scans must not erase meaningful bridge events');
+  assert.equal(debug.resourceCount, 1);
+  assert.equal(debug.playurlResources[0]?.pathname, '/x/player/wbi/playurl');
+  assert.equal(debug.playurlResources[0]?.cid, 'A');
+  assert.equal(debug.playurlResources[0]?.matchesPageIdentity, true);
+});
+
+test('fresh current embedded JOC manifests are recovered across repeated same-page navigation', async () => {
+  const bridge = await createBridge();
+  for (const [id, audio] of [['B', 'current-b.m4s'], ['C', 'current-c.m4s']]) {
+    const nextJoc = {data: {dash: {dolby: {audio: [{id: 3, codecs: 'ec-3', baseUrl: `https://media.bilivideo.com/${audio}`}]}}}};
+    bridge.navigate(id, nextJoc);
+    bridge.force();
+    await new Promise(setImmediate);
+    const next = bridge.emitted.find(message => message.type === 'manifest' && message.mediaKey.bvid === `BV${id}`);
+    assert.equal(next?.candidates[0]?.baseUrl, `https://media.bilivideo.com/${audio}`);
+  }
+});
+
+test('an embedded JOC payload is not adopted after an initial page without an embedded manifest', async () => {
+  const bridge = await createBridge({hasPayload: false, resources: [playurl('A')]});
+  bridge.navigate('B', joc);
+  bridge.force();
+  await new Promise(setImmediate);
+  assert.equal(bridge.emitted.filter(message => message.type === 'manifest' && message.mediaKey.bvid === 'BVB').length, 0);
+});
+
+test('an observed playurl remains discoverable after Performance Resource Timing evicts it', async () => {
+  const bridge = await createBridge();
+  bridge.emitResource(playurl('B'));
+  bridge.navigate('B', ordinary, []);
+  bridge.force();
+  await new Promise(setImmediate);
+  assert.ok(bridge.fetched.includes(playurl('B')));
 });
 
 test('a new ordinary video cannot inherit the previous global playinfo audio', async () => {

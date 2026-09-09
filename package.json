@@ -1,6 +1,6 @@
 {
   "name": "openjoc-browser",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "description": "Chromium browser playback integration for OpenJOC E-AC-3 JOC decoding",
@@ -19,7 +19,7 @@
     "cmaf-parity": "node scripts/cmaf-parity.mjs",
     "package:release": "node scripts/package-release.mjs",
     "validate:release": "node scripts/validate-release.mjs",
-    "test:lifecycle": "node --experimental-vm-modules --test tests/content-lifecycle.test.mjs tests/offscreen-lifecycle.test.mjs tests/service-worker-lifecycle.test.mjs tests/extension-startup.test.mjs tests/main-bridge-lifecycle.test.mjs tests/cmaf-fetch-lifecycle.test.mjs tests/output-gain.test.mjs tests/player-volume.test.mjs",
+    "test:lifecycle": "node --experimental-vm-modules --test tests/content-lifecycle.test.mjs tests/overlay-debug-state.test.mjs tests/offscreen-lifecycle.test.mjs tests/service-worker-lifecycle.test.mjs tests/extension-startup.test.mjs tests/main-bridge-lifecycle.test.mjs tests/cmaf-fetch-lifecycle.test.mjs tests/output-gain.test.mjs tests/player-volume.test.mjs",
     "test": "tsc -p tsconfig.test.json && node .test-dist/tests/audio-queue.test.js && node .test-dist/tests/worker-generation.test.js && node .test-dist/tests/cmaf-transport.test.js && node .test-dist/tests/cmaf-fetcher.test.js && node .test-dist/tests/cmaf-window.test.js && node .test-dist/tests/sync-state.test.js && node .test-dist/tests/timestamped-pcm-queue.test.js && node .test-dist/tests/media-url-policy.test.js && node .test-dist/tests/extension-protocol.test.js && node .test-dist/tests/bilibili-manifest.test.js && node .test-dist/tests/decode-backpressure.test.js && node .test-dist/tests/mock-bilibili-harness.test.js && node .test-dist/tests/video-clock-estimate.test.js && node .test-dist/tests/joc-overlay-state.test.js && node .test-dist/tests/audio-level.test.js && node .test-dist/tests/decode-progress.test.js && node .test-dist/tests/binaural-contract.test.js && node .test-dist/tests/media-session-policy.test.js && node .test-dist/tests/start-handshake.test.js"
   },
   "devDependencies": {

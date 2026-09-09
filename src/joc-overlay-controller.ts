@@ -64,11 +64,28 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
   let status: OverlayStatus | null = null;
   let copyStatusTimer: number | null = null;
 
+  function updateDebugState(): void {
+    panel.dataset.openjocState = JSON.stringify({
+      schemaVersion: 1,
+      mode: state.mode,
+      hasJoc: state.hasJoc,
+      detectionDismissed: state.detectionDismissed,
+      errorDetailsOpen: state.errorDetailsOpen,
+      renderer: state.renderer,
+      dialnorm: state.dialnorm,
+      gainDb: state.gainDb,
+      alwaysEnabled: state.alwaysEnabled,
+      statusPhase: status?.phase ?? null,
+      statusReason: status?.reason ?? null,
+    });
+  }
+
   function render(): void {
     panelBody.hidden = state.mode === 'hidden';
     panelBody.dataset.mode = state.mode;
     panelBody.classList.toggle('detected', state.mode === 'detected');
     panelBody.innerHTML = renderMode(state, status);
+    updateDebugState();
   }
 
   function transition(event: Parameters<typeof advanceOverlayState>[1]): void {
@@ -77,6 +94,7 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
   }
 
   function updateLiveStatus(): void {
+    updateDebugState();
     const metrics = status?.metrics ?? null;
     const health = healthValues(metrics);
     setLiveText('status-label', playbackStatusLabel(status));

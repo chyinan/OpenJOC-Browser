@@ -34,9 +34,109 @@ let observedRouteKey = initialRouteKey;
 let observedMediaKey: string | null = null;
 let bootstrapManifest: MainBridgeManifest | null = null;
 let canCaptureBootstrap = true;
+let initialEmbeddedFingerprint: string | null = null;
 let resolvedManifest: MainBridgeManifest | null = null;
 let pendingManifest: Readonly<{url: string; abort: AbortController}> | null = null;
 const knownMediaUrls = new Set<string>();
+const observedManifestUrls: Array<string> = [];
+const observedManifestUrlSet = new Set<string>();
+const MAX_OBSERVED_MANIFEST_URLS = 100;
+const bridgeTrace: Array<Readonly<Record<string, unknown>>> = [];
+
+function isManifestResourceUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.origin === API_ORIGIN && url.pathname === '/x/player/wbi/playurl';
+  } catch {
+    return false;
+  }
+}
+
+function rememberManifestResource(value: string): void {
+  if (!isManifestResourceUrl(value) || observedManifestUrlSet.has(value)) return;
+  observedManifestUrlSet.add(value);
+  observedManifestUrls.push(value);
+  if (observedManifestUrls.length > MAX_OBSERVED_MANIFEST_URLS) {
+    const removed = observedManifestUrls.shift();
+    if (removed !== undefined) observedManifestUrlSet.delete(removed);
+  }
+}
+
+function describePlayurlResources(names: ReadonlyArray<string>, identity: MainBridgePageState | null): Array<Readonly<Record<string, unknown>>> {
+  const result: Array<Readonly<Record<string, unknown>>> = [];
+  for (const name of names.slice().reverse()) {
+    try {
+      const url = new URL(name);
+      if (url.origin !== API_ORIGIN || !url.pathname.includes('/player/')) continue;
+      result.push({
+        pathname: url.pathname,
+        bvid: url.searchParams.get('bvid'),
+        aid: url.searchParams.get('avid') ?? url.searchParams.get('aid'),
+        cid: url.searchParams.get('cid'),
+        isCurrentPlayurl: url.pathname === '/x/player/wbi/playurl',
+        matchesPageIdentity: identity !== null && isCurrentManifestUrl(name, identity),
+      });
+      if (result.length >= 20) break;
+    } catch {
+      // Ignore malformed resource names in diagnostics.
+    }
+  }
+  return result;
+}
+
+function recentPlayurlResources(identity: MainBridgePageState | null): Array<Readonly<Record<string, unknown>>> {
+  return describePlayurlResources(performance.getEntriesByType('resource').map((resource) => resource.name), identity);
+}
+
+function observeManifestResources(): void {
+  performance.getEntriesByType('resource').forEach((resource) => rememberManifestResource(resource.name));
+  if (typeof PerformanceObserver === 'undefined') return;
+  try {
+    const observer = new PerformanceObserver((list): void => {
+      list.getEntries().forEach((entry) => rememberManifestResource(entry.name));
+      updateBridgeDebug('resource-observed', {observedBatchSize: list.getEntries().length});
+    });
+    observer.observe({type: 'resource', buffered: true});
+  } catch {
+    // Resource Timing observation is optional; periodic scans remain available.
+  }
+}
+
+function updateBridgeDebug(event: string, details: Readonly<Record<string, unknown>> = {}): void {
+  const traceEntry = {atMs: Math.round(performance.now()), event, ...details};
+  if (event !== 'scan' && event !== 'scan-awaiting-manifest') bridgeTrace.push(traceEntry);
+  if (bridgeTrace.length > 30) bridgeTrace.shift();
+  const root = document.documentElement;
+  if (root === null) return;
+  const identity = pageState();
+  const embeddedCandidates = candidatesFromPayload(pagePlayinfo());
+  root.dataset.openjocBridgeDebug = JSON.stringify({
+    schemaVersion: 1,
+    currentUrl: location.href,
+    routeKey: pageRouteKey(),
+    initialRouteKey,
+    observedRouteKey,
+    pageIdentity: mediaKey(identity),
+    observedMediaKey,
+    lastManifestUrl,
+    pendingManifestUrl: pendingManifest?.url ?? null,
+    resolvedManifestIdentity: resolvedManifest === null ? null : mediaKey(resolvedManifest.identity),
+    resolvedManifestRouteKey: resolvedManifest?.routeKey ?? null,
+    resolvedCandidateCount: resolvedManifest?.candidates.length ?? null,
+    bootstrapManifestIdentity: bootstrapManifest === null ? null : mediaKey(bootstrapManifest.identity),
+    embeddedCandidateCount: embeddedCandidates.length,
+    embeddedFingerprintChanged: initialEmbeddedFingerprint === null ? null : candidatesFingerprint(embeddedCandidates) !== initialEmbeddedFingerprint,
+    canCaptureBootstrap,
+    resourceCount: performance.getEntriesByType('resource').length,
+    playurlResources: recentPlayurlResources(identity),
+    observedManifestResourceCount: observedManifestUrls.length,
+    cachedPlayurlResources: describePlayurlResources(observedManifestUrls, identity),
+    lastMeaningfulEvent: bridgeTrace.at(-1)?.event ?? null,
+    knownMediaUrlCount: knownMediaUrls.size,
+    event,
+    trace: bridgeTrace,
+  });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -121,14 +221,13 @@ function pagePlayinfo(): unknown {
 }
 
 function manifestUrl(identity: MainBridgePageState): string | null {
-  const entry = performance.getEntriesByType('resource')
-    .map((resource) => resource.name)
-    .reverse()
-    .find((name) => isCurrentManifestUrl(name, identity));
+  performance.getEntriesByType('resource').forEach((resource) => rememberManifestResource(resource.name));
+  const entry = observedManifestUrls.slice().reverse().find((name) => isCurrentManifestUrl(name, identity));
   return entry ?? null;
 }
 
 function emit(message: Readonly<Record<string, unknown>>): void {
+  updateBridgeDebug('emit', {messageType: message.type});
   window.postMessage(message, PAGE_ORIGIN);
 }
 
@@ -144,13 +243,17 @@ function candidatesFromPayload(payload: unknown): ReadonlyArray<MainBridgeCandid
   return result;
 }
 
+function candidatesFingerprint(candidates: ReadonlyArray<MainBridgeCandidate>): string {
+  return candidates.map((candidate) => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|');
+}
+
 function isCurrentManifest(manifest: MainBridgeManifest): boolean {
   return manifest.routeKey === pageRouteKey() && mediaKey(manifest.identity) === mediaKey(pageState());
 }
 
 function publishManifest(manifest: MainBridgeManifest, force = false): void {
   if (!isCurrentManifest(manifest)) return;
-  const fingerprint = `${mediaKey(manifest.identity)}|${manifest.candidates.map(candidate => `${candidate.source}:${candidate.id}:${candidate.baseUrl}`).join('|')}`;
+  const fingerprint = `${mediaKey(manifest.identity)}|${candidatesFingerprint(manifest.candidates)}`;
   if (!force && fingerprint === lastPageManifestFingerprint) return;
   lastPageManifestFingerprint = fingerprint;
   knownMediaUrls.clear();
@@ -179,9 +282,18 @@ function currentBootstrap(identity: MainBridgePageState): MainBridgeManifest | n
     const payload = pagePlayinfo();
     const data = record(property(record(payload), 'data'));
     if (record(property(data, 'dash')) === null && record(property(data, 'dolby')) === null) return null;
-    bootstrapManifest = {identity, routeKey: initialRouteKey, candidates: candidatesFromPayload(payload)};
+    const candidates = candidatesFromPayload(payload);
+    bootstrapManifest = {identity, routeKey: initialRouteKey, candidates};
+    if (candidates.length > 0) initialEmbeddedFingerprint = candidatesFingerprint(candidates);
   }
   return isCurrentManifest(bootstrapManifest) ? bootstrapManifest : null;
+}
+
+function currentEmbeddedManifest(identity: MainBridgePageState, routeKey: string): MainBridgeManifest | null {
+  if (routeKey === initialRouteKey || canCaptureBootstrap || initialEmbeddedFingerprint === null) return null;
+  const candidates = candidatesFromPayload(pagePlayinfo());
+  if (candidates.length === 0 || candidatesFingerprint(candidates) === initialEmbeddedFingerprint) return null;
+  return {identity, routeKey, candidates};
 }
 
 function collect(
@@ -222,7 +334,7 @@ function isCurrentManifestUrl(value: string, identity: MainBridgePageState): boo
     const url = new URL(value);
     const bvid = url.searchParams.get('bvid');
     const aid = url.searchParams.get('avid') ?? url.searchParams.get('aid');
-    return url.origin === API_ORIGIN && url.pathname === '/x/player/wbi/playurl'
+    return isManifestResourceUrl(value)
       && url.searchParams.get('cid') === identity.cid
       && (bvid === null || bvid === identity.bvid)
       && (aid === null || aid === identity.aid);
@@ -250,6 +362,7 @@ async function fetchManifest(url: string, identity: MainBridgePageState): Promis
   const request = {url, abort: new AbortController()};
   const routeKey = pageRouteKey();
   pendingManifest = request;
+  updateBridgeDebug('manifest-requested', {url, identity: mediaKey(identity), requestRouteKey: routeKey});
   const isCurrentRequest = (): boolean => pendingManifest === request && !request.abort.signal.aborted
     && routeKey === pageRouteKey() && mediaKey(identity) === mediaKey(pageState());
   try {
@@ -259,10 +372,12 @@ async function fetchManifest(url: string, identity: MainBridgePageState): Promis
     if (!isCurrentRequest()) return;
     // A successful AAC-only response is authoritative; never fall back to old JOC globals.
     resolvedManifest = {identity, routeKey, candidates: candidatesFromPayload(payload)};
+    updateBridgeDebug('manifest-response', {url, identity: mediaKey(identity), candidateCount: resolvedManifest.candidates.length});
     if (canCaptureBootstrap && routeKey === initialRouteKey && bootstrapManifest === null) bootstrapManifest = resolvedManifest;
     publishManifest(resolvedManifest, true);
   } catch (error: unknown) {
     if (!isCurrentRequest()) return;
+    updateBridgeDebug('manifest-error', {url, identity: mediaKey(identity), reason: error instanceof Error ? error.message : String(error)});
     const fallback = resolvedManifest ?? currentBootstrap(identity);
     if (fallback !== null && isCurrentManifest(fallback)) {
       resolvedManifest = fallback;
@@ -278,7 +393,9 @@ function scan(force = false): void {
   const identity = pageState();
   const identityKey = mediaKey(identity);
   if (routeKey !== observedRouteKey || identityKey !== observedMediaKey) {
-    const hadMedia = observedMediaKey !== null || routeKey !== observedRouteKey;
+    const previousRouteKey = observedRouteKey;
+    const previousMediaKey = observedMediaKey;
+    const hadMedia = previousMediaKey !== null || routeKey !== previousRouteKey;
     if (hadMedia) canCaptureBootstrap = false;
     observedRouteKey = routeKey;
     observedMediaKey = identityKey;
@@ -288,22 +405,31 @@ function scan(force = false): void {
     lastManifestUrl = null;
     lastPageManifestFingerprint = null;
     knownMediaUrls.clear();
+    updateBridgeDebug('media-identity-changed', {previousRouteKey, previousMediaKey, nextRouteKey: routeKey, nextMediaKey: identityKey});
     if (hadMedia) emitUnavailable('waiting for the current Bilibili media identity');
   }
-  if (identity === null) return;
+  if (identity === null) {
+    updateBridgeDebug('scan-without-identity', {force});
+    return;
+  }
   const bootstrap = currentBootstrap(identity);
   const next = manifestUrl(identity);
   if (next !== null && (force || next !== lastManifestUrl)) {
     lastManifestUrl = next;
+    updateBridgeDebug('scan-found-playurl', {force, url: next, identity: identityKey});
     void fetchManifest(next, identity);
     return;
   }
-  if (pendingManifest !== null) return;
-  const manifest = resolvedManifest ?? bootstrap;
+  if (pendingManifest !== null) {
+    updateBridgeDebug('scan-awaiting-manifest', {force});
+    return;
+  }
+  const manifest = resolvedManifest ?? bootstrap ?? currentEmbeddedManifest(identity, routeKey);
   if (manifest !== null) {
     resolvedManifest = manifest;
     publishManifest(manifest, force);
   }
+  updateBridgeDebug('scan', {force});
 }
 
 window.addEventListener('message', (event: MessageEvent<unknown>): void => {
@@ -331,6 +457,7 @@ window.addEventListener('message', (event: MessageEvent<unknown>): void => {
   })();
 });
 
+observeManifestResources();
 window.setInterval((): void => scan(), 1_000);
 scan();
 })();

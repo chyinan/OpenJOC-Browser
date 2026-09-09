@@ -137,6 +137,10 @@ function isUnavailableMessage(value: unknown): value is ContentUnavailable {
   return candidate !== null && candidate.source === 'openjoc-bilibili' && candidate.type === 'unavailable' && candidate.pageOrigin === PAGE_ORIGIN && isString(candidate.pageUrl) && isString(candidate.reason) && candidate.reason.length > 0;
 }
 
+function isCurrentPageMessage(pageUrl: string): boolean {
+  return pageUrl === location.href;
+}
+
 function isStatusMessage(value: unknown): value is ContentStatus {
   return isRuntimeMessage(value) && value.target === 'background' && value.type === 'offscreen-status';
 }
@@ -467,13 +471,14 @@ window.addEventListener('message', (event: MessageEvent<unknown>): void => {
     send({target: 'background', type: 'page-media-range-response', tabId: pending.tabId, generation: pending.generation, requestId: pending.requestId, status: event.data.status, contentRange: event.data.contentRange, error: event.data.error, bufferBase64: arrayBufferToBase64(event.data.buffer)});
     return;
   }
-  if (isUnavailableMessage(event.data)) {
+  if (isUnavailableMessage(event.data) && isCurrentPageMessage(event.data.pageUrl)) {
     disableOpenJoc('manifest-unavailable');
     latestManifest = null;
     overlay.setManifest(false);
     return;
   }
   if (!isManifestMessage(event.data)) return;
+  if (!isCurrentPageMessage(event.data.pageUrl)) return;
   const current = latestManifest;
   if (current !== null && mediaKeyString(current.mediaKey) !== mediaKeyString(event.data.mediaKey)) {
     videoGeneration += 1;
