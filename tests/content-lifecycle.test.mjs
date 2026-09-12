@@ -23,7 +23,7 @@ test('long pause resumes a confirmed stream even when its last stage was fetchin
   const sent = [];
   const video = {
     paused: false, seeking: false, muted: false, defaultMuted: false, volume: 1,
-    currentTime: 0, readyState: 4, playbackRate: 1, clientWidth: 1280, clientHeight: 720,
+    currentTime: 0, readyState: 4, playbackRate: 1, clientWidth: 1280, clientHeight: 720, dataset: {},
     addEventListener(name, listener) {videoListeners.set(name, listener);},
   };
   const pageWindow = {

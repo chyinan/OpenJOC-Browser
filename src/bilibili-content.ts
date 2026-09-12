@@ -31,6 +31,7 @@ const OUTPUT_GAIN_STORAGE_KEY = 'outputGainDb';
 let video: HTMLVideoElement | null = null;
 let videoGeneration = 0;
 let latestManifest: ContentManifest | null = null;
+let hasUnmutedPlayback = false;
 let nativeControl: {video: HTMLVideoElement; token: string; requestId: string; generation: number; acknowledged: boolean; requestedAt: number} | null = null;
 let isOpenJocRequested = false;
 let latestStatus: ContentStatus | null = null;
@@ -331,6 +332,7 @@ function attachVideo(nextVideo: HTMLVideoElement): void {
     disableOpenJoc('video-replaced');
   }
   video = nextVideo;
+  hasUnmutedPlayback = !nextVideo.paused && !nextVideo.muted;
   videoGeneration += 1;
   latestManifest = null;
   overlay.reset();
@@ -357,6 +359,7 @@ function attachVideo(nextVideo: HTMLVideoElement): void {
         }
       }
       emitClock(eventName !== 'timeupdate' && eventName !== 'volumechange');
+      if (eventName === 'play' || eventName === 'playing' || eventName === 'volumechange') suppressNativeAudio();
     });
   }
   scheduleVideoFrameCallback();
@@ -373,7 +376,11 @@ function restoreNativeAudio(): void {
 
 function suppressNativeAudio(): void {
   const currentVideo = video;
+  // Let Chromium observe one real, unmuted playback before the extension mutes the original track.
+  // Taking control earlier makes a hidden page eligible for the browser's automatic pause policy.
   if (currentVideo === null || activeStartRequestId === null) return;
+  if (!hasUnmutedPlayback && !currentVideo.paused && !currentVideo.muted) hasUnmutedPlayback = true;
+  if (!hasUnmutedPlayback) return;
   if (nativeControl?.video === currentVideo && nativeControl.requestId === activeStartRequestId && nativeControl.generation === videoGeneration) return;
   const token = currentVideo.dataset.openjocAudioToken ?? crypto.randomUUID();
   currentVideo.dataset.openjocAudioToken = token;
@@ -481,6 +488,7 @@ window.addEventListener('message', (event: MessageEvent<unknown>): void => {
   if (!isCurrentPageMessage(event.data.pageUrl)) return;
   const current = latestManifest;
   if (current !== null && mediaKeyString(current.mediaKey) !== mediaKeyString(event.data.mediaKey)) {
+    hasUnmutedPlayback = false;
     videoGeneration += 1;
     disableOpenJoc('media-changed');
     overlay.reset();
@@ -555,6 +563,7 @@ clockTimer = window.setInterval((): void => {
     if (isOpenJocRequested) {
       disableOpenJoc('location-changed');
     }
+    hasUnmutedPlayback = false;
     latestManifest = null;
     videoGeneration += 1;
     overlay.reset();

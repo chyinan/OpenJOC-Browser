@@ -59,7 +59,7 @@ async function createExtension(options = {}) {
         for (const listener of backgroundListeners) listener(message, {id: 'openjoc-test'});
       }
     },
-    async page(documentId) {
+    async page(documentId, pageOptions = {}) {
       const nativeAudio = await createNativeAudioRuntime();
       const listeners = [];
       const windowEvents = new Map();
@@ -75,7 +75,7 @@ async function createExtension(options = {}) {
       let uiRenderer = 'stereo-speakers';
       let uiGainDb = 0;
       const video = Object.assign(nativeAudio.video, {
-        paused: false, seeking: false, muted: false, defaultMuted: false, volume: 1,
+        paused: pageOptions.paused ?? false, seeking: false, muted: pageOptions.muted ?? false, defaultMuted: false, volume: 1,
         currentTime: 0, readyState: 4, playbackRate: 1, clientWidth: 1280, clientHeight: 720,
       });
       const pageWindow = {
@@ -85,6 +85,7 @@ async function createExtension(options = {}) {
       nativeAudio.onState(message => queueMicrotask(() => windowEvents.get('message')?.({source: pageWindow, origin: 'https://www.bilibili.com', data: message})));
       const page = {
         video,
+        physicalMuted() {return nativeAudio.physicalMuted();},
         get status() {return status;},
         get requested() {return requested;},
         get debug() {return debug;},
@@ -216,6 +217,42 @@ test('starting OpenJOC from an already paused video preserves the paused state',
     const start = extension.messages.find(message => message.target === 'offscreen' && message.type === 'start');
     assert.equal(start?.paused, true);
     assert.equal(start?.buffering, false);
+  } finally {extension.close();}
+});
+
+test('paused startup waits for the first unmuted play before taking native audio control', async () => {
+  const extension = await createExtension();
+  try {
+    const page = await extension.page('paused-native-handoff', {paused: true});
+    page.manifest();
+    page.enable();
+    await waitFor(() => extension.messages.some(message => message.type === 'offscreen-status' && message.phase === 'ready'), 'paused startup readiness');
+    assert.equal(page.physicalMuted(), false, 'paused startup must not physically mute the original video');
+
+    page.video.paused = false;
+    page.event('play');
+    await page.active();
+    assert.equal(page.physicalMuted(), true, 'native audio is suppressed after the first unmuted play');
+
+    page.disable();
+    await new Promise(setImmediate);
+    assert.equal(page.physicalMuted(), false, 'disabling OpenJOC restores native audio');
+  } finally {extension.close();}
+});
+
+test('muted autoplay waits for user unmute before taking native audio control', async () => {
+  const extension = await createExtension();
+  try {
+    const page = await extension.page('muted-autoplay', {muted: true});
+    page.manifest();
+    page.enable();
+    await waitFor(() => extension.messages.some(message => message.type === 'offscreen-status' && message.phase === 'ready'), 'muted autoplay readiness');
+    assert.equal(Object.hasOwn(page.video, 'muted'), false, 'user-muted autoplay must not install the extension accessor');
+
+    page.video.muted = false;
+    await page.active();
+    assert.equal(Object.hasOwn(page.video, 'muted'), true, 'unmuting a playing video permits native audio takeover');
+    page.disable();
   } finally {extension.close();}
 });
 
