@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.5] - 2026-09-13
+
+### Fixed
+
+- Fixed background playback stopping after the browser window was minimized. OpenJOC could physically mute the original video before its first real unmuted playback, causing Chromium to classify the media as always muted and automatically pause it while the page was hidden.
+- Delayed native-audio takeover until the current video has played unmuted at least once. Existing user pause, mute, muted-autoplay, and offscreen-recovery behavior remains intact.
+- Added end-to-end regression coverage for paused startup, muted autoplay, first unmuted play, native-audio restoration, and offscreen recovery.
+
 ## [0.1.2] - 2026-09-09
 
 ### Fixed
