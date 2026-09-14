@@ -11,7 +11,7 @@ Phase 1 adds a Chromium MV3 adapter for standard Bilibili VOD pages. The page's 
 The 2026-09-03 Edge CDP observation used a standard `/video/BV.../` page and observed:
 
 - playback manifest request: `https://api.bilibili.com/x/player/wbi/playurl`;
-- DASH/fMP4 media URLs under `https://upos-*.bilivideo.com/.../*.m4s`;
+- DASH/fMP4 media URLs under `https://upos-*.bilivideo.com/.../*.m4s`; overseas sessions may also return `https://upos-*.akamaized.net/.../*.m4s`;
 - ranged responses with `206 Content-Range`, `ftyp`, `moov`, top-level `sidx`, then indexed media ranges;
 - observed sample timeline for an ordinary audio representation: 48 kHz `sidx`, 54 references, 240640-sample reference duration;
 - page video `currentSrc` is a `blob:` URL owned by the site's MSE player.
@@ -67,6 +67,6 @@ Decoder-progress timeouts measure active decoding time only. Pause and buffering
 
 ## Scope and limitations
 
-Supported implementation scope: Bilibili standard VOD, Chromium-based browsers, OpenJOC WASM, E-AC-3 JOC, Stereo (Speakers), and 1.0x playback. The manifest uses only Bilibili page/API and `*.bilivideo.com` host access.
+Supported implementation scope: Bilibili standard VOD, Chromium-based browsers, OpenJOC WASM, E-AC-3 JOC, Stereo (Speakers), and 1.0x playback. The manifest uses Bilibili page/API, `*.bilivideo.com`, and the runtime-scoped `upos-*.akamaized.net` media host access.
 
 Deferred or unsupported: Binaural, Custom SOFA, virtual 9.1.6, non-1.0x time-stretch, Safari, Firefox, DRM/encrypted representations, and other Bilibili player classes. No account, region, DRM, or native Dolby bypass is implemented.

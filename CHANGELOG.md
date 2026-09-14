@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.6] - 2026-09-14
+
+### Fixed
+
+- Added scoped support for Bilibili overseas Akamai media hosts (`upos-*.akamaized.net`) while keeping runtime URL validation tied to the current manifest.
+- Parsed CMAF `mvex/trex` default sample duration and size values used by overseas Dolby fragments.
+- Retried failed CMAF segments on the next manifest mirror and kept the first working mirror for subsequent segments.
+- Deferred early native-audio activation until the in-band JOC profile is confirmed, preventing silent startup after play or seek.
+- Added regression coverage for overseas CDN detection, CMAF defaults, 403/page-context fallback, mirror failover, and activation ordering.
+
 ## [0.1.5] - 2026-09-13
 
 ### Fixed

@@ -74,9 +74,11 @@ export async function createPlaybackRuntime(options = {}) {
   let idleOffsetMs = 0;
   let areWindowIntervalsSuspended = options.windowIntervalsSuspended === true;
   const accessUnitsPerSegment = options.accessUnitsPerSegment ?? 64;
+  const defaultCandidate = {id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000, baseUrl: 'https://media.bilivideo.com/audio.m4s', backupUrls: []};
+  const candidate = options.candidate ?? defaultCandidate;
   const fixture = readFileSync(new URL('../../fixtures/joc.lifecycle.ec3', import.meta.url));
   const wasm = readFileSync(new URL('../../extension/wasm/openjoc_wasm.wasm', import.meta.url));
-  const references = Array.from({length: options.segments ?? 2}, (_, index) => ({ptsSamples: index * accessUnitsPerSegment * 1536, durationSamples: accessUnitsPerSegment * 1536}));
+  const references = Array.from({length: options.segments ?? 2}, (_, index) => ({byteRangeStart: index * 4096, byteRangeEnd: (index + 1) * 4096 - 1, ptsSamples: index * accessUnitsPerSegment * 1536, durationSamples: accessUnitsPerSegment * 1536}));
 
   const scheduler = {
     setTimeout(fn, ms) {
@@ -185,6 +187,7 @@ export async function createPlaybackRuntime(options = {}) {
       async sendMessage(message) {
         messages.push(message);
         options.onStatus?.(message);
+        if (message.type === 'page-media-range-request') options.onPageRangeRequest?.(message, dispatch);
         if (options.autoReady !== false && message.phase === 'ready') {
           queueMicrotask(() => dispatch({target: 'offscreen', type: 'native-muted', tabId: message.tabId, generation: message.generation}));
         }
@@ -196,12 +199,19 @@ export async function createPlaybackRuntime(options = {}) {
         await options.onFetchIndex?.(fetchOptions);
         return {url: fetchOptions.url, pageUrl: fetchOptions.pageUrl, init: {trackId: 1}, index: {timescale: 48_000, earliestPresentationTime: 0, references}};
       },
-      async fetchCmafSegment(_session, reference) {
+      async fetchCmafSegment(session, reference) {
+        const customSamples = await options.onFetchSegment?.(session, reference);
+        if (customSamples !== undefined) return customSamples;
         const first = reference.ptsSamples / 1536;
         return Array.from({length: accessUnitsPerSegment}, (_, index) => ({
           ptsSamples: (first + index) * 1536,
           bytes: new Uint8Array(fixture.subarray(((first + index) % 128) * 4096, (((first + index) % 128) + 1) * 4096)),
         }));
+      },
+    },
+    'cmaf-transport.js': {
+      parseCmafFragment() {
+        return [{ptsSamples: 0, durationSamples: 1536, bytes: new Uint8Array(fixture.subarray(0, 4096))}];
       },
     },
   });
@@ -232,7 +242,7 @@ export async function createPlaybackRuntime(options = {}) {
         target: 'offscreen', type: 'start', requestId, tabId, generation,
         pageUrl: `https://www.bilibili.com/video/BV${media}/`,
         mediaKey: {bvid: `BV${media}`, aid: media, cid: media},
-        candidate: {id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000, baseUrl: 'https://media.bilivideo.com/audio.m4s', backupUrls: []},
+        candidate,
         videoTimeSamples: 0, paused: playbackState.paused ?? false, buffering: playbackState.buffering ?? false,
         dialnorm: 'unity', renderer: 'stereo',
       };

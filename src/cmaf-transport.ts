@@ -1,5 +1,11 @@
 // pattern: Functional Core
 
+/** The default sample values carried by an ISO-BMFF trex box. */
+export type CmafSampleDefaults = Readonly<{
+  readonly defaultSampleDuration: number | null;
+  readonly defaultSampleSize: number | null;
+}>;
+
 /** The generic ISO-BMFF facts needed by the browser CMAF fetch shell. */
 export type CmafInitInfo = Readonly<{
   readonly trackId: number;
@@ -8,7 +14,7 @@ export type CmafInitInfo = Readonly<{
   readonly sampleEntry: string;
   readonly hasDecoderConfig: boolean;
   readonly isEncrypted: boolean;
-}>;
+}> & CmafSampleDefaults;
 
 /** One byte-addressed reference from an ISO-BMFF segment index. */
 export type CmafSegmentReference = Readonly<{
@@ -75,7 +81,8 @@ export function parseCmafInitSegment(bytes: Readonly<Uint8Array>): CmafInitInfo 
     const isEncrypted = sampleEntry === 'enca'
       || (childStart <= sampleEntryBox.end && (findDescendantInRange(bytes, childStart, sampleEntryBox.end, 'sinf') !== null || findDescendantInRange(bytes, childStart, sampleEntryBox.end, 'schm') !== null))
       || topLevel.some((box_) => box_.type === 'pssh');
-    return {trackId, timescale, handlerType, sampleEntry, hasDecoderConfig, isEncrypted};
+    const defaults = readTrexDefaults(bytes, moov, trackId);
+    return {trackId, timescale, handlerType, sampleEntry, hasDecoderConfig, isEncrypted, ...defaults};
   }
   throw new Error('CMAF initialization segment has no audio track');
 }
@@ -143,6 +150,7 @@ export function parseCmafSegmentIndex(bytes: Readonly<Uint8Array>): CmafSegmentI
 export function parseCmafFragment(
   bytes: Readonly<Uint8Array>,
   trackId: number,
+  sampleDefaults: CmafSampleDefaults = {defaultSampleDuration: null, defaultSampleSize: null},
 ): ReadonlyArray<CmafSample> {
   if (!Number.isSafeInteger(trackId) || trackId <= 0) {
     throw new Error('CMAF track id must be a positive safe integer');
@@ -162,7 +170,7 @@ export function parseCmafFragment(
   if (tfhd === null || tfdt === null) {
     throw new Error('CMAF fragment is missing tfhd or tfdt');
   }
-  const defaults = parseTrackDefaults(bytes, tfhd);
+  const defaults = parseTrackDefaults(bytes, tfhd, sampleDefaults);
   let decodeTime = readDecodeTime(bytes, tfdt);
   let dataCursor = mdat.payloadStart;
   const samples: Array<CmafSample> = [];
@@ -189,13 +197,15 @@ type ParsedRun = Readonly<{
   readonly nextDataCursor: number;
 }>;
 
-function parseTrackDefaults(bytes: Readonly<Uint8Array>, tfhd: IsoBox): TrackDefaults {
+function parseTrackDefaults(bytes: Readonly<Uint8Array>, tfhd: IsoBox, sampleDefaults: CmafSampleDefaults): TrackDefaults {
+  const defaultDuration = validateSampleDefault(sampleDefaults.defaultSampleDuration, 'duration');
+  const defaultSize = validateSampleDefault(sampleDefaults.defaultSampleSize, 'size');
   const flags = readU32(bytes, tfhd.payloadStart) & 0x00ff_ffff;
   let cursor = tfhd.payloadStart + 8;
   if ((flags & 0x000001) !== 0) cursor += 8;
   if ((flags & 0x000002) !== 0) cursor += 4;
-  let durationSamples: number | null = null;
-  let sizeBytes: number | null = null;
+  let durationSamples: number | null = defaultDuration;
+  let sizeBytes: number | null = defaultSize;
   if ((flags & 0x000008) !== 0) {
     durationSamples = readU32(bytes, cursor);
     cursor += 4;
@@ -204,6 +214,27 @@ function parseTrackDefaults(bytes: Readonly<Uint8Array>, tfhd: IsoBox): TrackDef
     sizeBytes = readU32(bytes, cursor);
   }
   return {durationSamples, sizeBytes};
+}
+
+function readTrexDefaults(bytes: Readonly<Uint8Array>, moov: IsoBox, trackId: number): CmafSampleDefaults {
+  const mvex = findChild(bytes, moov, 'mvex');
+  const trex = mvex === null ? null : childBoxes(bytes, mvex, 'trex').find((candidate) => readU32(bytes, candidate.payloadStart + 4) === trackId);
+  if (trex === null || trex === undefined) return {defaultSampleDuration: null, defaultSampleSize: null};
+  return {
+    defaultSampleDuration: nullableSampleDefault(readU32(bytes, trex.payloadStart + 12)),
+    defaultSampleSize: nullableSampleDefault(readU32(bytes, trex.payloadStart + 16)),
+  };
+}
+
+function nullableSampleDefault(value: number): number | null {
+  return value === 0 ? null : value;
+}
+
+function validateSampleDefault(value: number | null, description: string): number | null {
+  if (value !== null && (!Number.isSafeInteger(value) || value <= 0)) {
+    throw new Error(`CMAF default sample ${description} must be positive`);
+  }
+  return value;
 }
 
 function parseRun(

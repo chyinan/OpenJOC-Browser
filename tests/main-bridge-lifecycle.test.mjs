@@ -61,6 +61,14 @@ test('initial JOC bootstrap remains available without a playurl resource entry',
   assert.ok(bridge.emitted.some(message => message.type === 'manifest' && message.mediaKey.bvid === 'BVA'));
 });
 
+test('the page-context range bridge accepts an Akamai URL from the current manifest', async () => {
+  const akamai = 'https://upos-hz-mirrorakam.akamaized.net/audio.m4s';
+  const bridge = await createBridge({payload: {data: {dash: {dolby: {audio: [{id: 1, codecs: 'ec-3', baseUrl: akamai}]}}}}});
+  bridge.range(akamai);
+  await new Promise(setImmediate);
+  assert.ok(bridge.fetched.includes(akamai), 'the exact current Akamai media URL reaches page-context fetch');
+});
+
 test('the bridge exposes its current identity and manifest lookup state for field debugging', async () => {
   const bridge = await createBridge();
   const debug = bridge.debug();

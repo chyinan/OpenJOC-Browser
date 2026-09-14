@@ -2,6 +2,7 @@
 
 const BILIBILI_PAGE_ORIGIN = 'https://www.bilibili.com';
 const BILIBILI_MEDIA_SUFFIX = '.bilivideo.com';
+const BILIBILI_AKAMAI_HOST_PATTERN = /^upos-[a-z0-9-]+\.akamaized\.net$/;
 
 /** Validates an in-memory Bilibili media URL against the current page origin. */
 export function isAllowedBilibiliMediaUrl(urlValue: string, pageUrl: string): boolean {
@@ -30,5 +31,7 @@ export function sanitizeMediaUrl(urlValue: string): string {
 }
 
 function isBilibiliMediaHostname(hostname: string): boolean {
-  return hostname === BILIBILI_MEDIA_SUFFIX.slice(1) || hostname.endsWith(BILIBILI_MEDIA_SUFFIX);
+  return hostname === BILIBILI_MEDIA_SUFFIX.slice(1)
+    || hostname.endsWith(BILIBILI_MEDIA_SUFFIX)
+    || BILIBILI_AKAMAI_HOST_PATTERN.test(hostname);
 }

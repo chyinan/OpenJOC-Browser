@@ -57,6 +57,7 @@ type Session = {
   windowEndSamples: number;
   isStreaming: boolean;
   isNativeMuted: boolean;
+  activationPending: boolean;
   isJocConfirmed: boolean;
   isPaused: boolean;
   isBuffering: boolean;
@@ -112,6 +113,7 @@ let pendingStart: PendingStart | null = null;
 const pendingPageRanges = new Map<string, Readonly<{generation: number; resolve(response: PageRangeResponse): void; reject(error: Error): void}>>();
 
 type PageRangeResponse = Readonly<{readonly status: number; readonly contentRange: string | null; readonly error: string | null; readonly buffer: ArrayBuffer}>;
+type SegmentFetchResult = Readonly<{readonly samples: ReadonlyArray<CmafSample>; readonly session: CmafIndexSession}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -262,6 +264,17 @@ function applyOutputGain(session: Session, immediate = false): void {
   else gain.setTargetAtTime(amplitude, now, 0.015);
 }
 
+function activateNativeAudio(session: Session): void {
+  if (!isCurrentSession(session) || !session.activationPending || !session.isJocConfirmed) return;
+  session.activationPending = false;
+  session.isNativeMuted = true;
+  audioNode?.port.postMessage({type: 'arm', generation: session.audioGeneration});
+  if (!session.isPaused && !session.isBuffering) {
+    session.phase = 'active';
+    if (audioContext !== null) void audioContext.resume();
+  }
+}
+
 function isProgressWatchdogPaused(session: Session): boolean {
   return session.isPaused || session.isBuffering;
 }
@@ -358,6 +371,7 @@ function handleWorkerMessage(message: WorkerMessage): void {
         session.phase = 'ready';
         sendStatus('ready', null, session);
       }
+      activateNativeAudio(session);
     }
     sendStatus(session.phase, null, session);
     return;
@@ -383,7 +397,9 @@ async function pumpSegments(session: Session): Promise<void> {
     for (const reference of references) {
       if (!isCurrentSession(session)) return;
       session.stage = 'fetching-segment';
-      const samples = await fetchSegmentWithPageFallback(session.index, reference, session.abort.signal, session.request.tabId, session.request.generation);
+      const fetchedSegment = await fetchSegmentWithPageFallback(session.index, reference, session.abort.signal, session.request.tabId, session.request.generation);
+      session.index = fetchedSegment.session;
+      const samples = fetchedSegment.samples;
       const previousAccessUnits = latestDecoderStatus?.decodedAccessUnits ?? 0;
       for (const sample of samples) {
         if (!isCurrentSession(session)) return;
@@ -437,10 +453,13 @@ async function fetchIndexWithFallback(
 ): Promise<CmafIndexSession> {
   const urls = [request.candidate.baseUrl, ...request.candidate.backupUrls];
   let lastError: Error | null = null;
-  for (const url of urls) {
+  for (let urlIndex = 0; urlIndex < urls.length; urlIndex += 1) {
+    const url = urls[urlIndex];
+    if (url === undefined) continue;
     try {
       updateStage('fetching-index');
-      return await fetchCmafIndex({url, pageUrl: request.pageUrl, signal});
+      const index = await fetchCmafIndex({url, pageUrl: request.pageUrl, signal});
+      return {...index, fallbackUrls: urls.slice(urlIndex + 1)};
     } catch (error: unknown) {
       if (signal.aborted) throw error;
       if (error instanceof Error && (error.message.includes('status 403') || error.message.includes('request timed out'))) {
@@ -448,12 +467,13 @@ async function fetchIndexWithFallback(
           updateStage('fetching-page-context-index');
           const pageResponse = await requestPageRange(request.tabId, request.generation, url, 0, 8_191, signal);
           if (pageResponse.status !== 206) throw new Error(`page-context CMAF range request returned status ${pageResponse.status}`);
-          return await fetchCmafIndex({
+          const index = await fetchCmafIndex({
             url,
             pageUrl: request.pageUrl,
             signal,
             fetchImpl: async (): Promise<Response> => new Response(pageResponse.buffer, {status: pageResponse.status, headers: pageResponse.contentRange === null ? undefined : {'content-range': pageResponse.contentRange}}),
           });
+          return {...index, fallbackUrls: urls.slice(urlIndex + 1)};
         } catch (pageError: unknown) {
           if (signal.aborted) throw pageError;
           lastError = pageError instanceof Error ? pageError : new Error('page-context CMAF range fetch failed');
@@ -521,10 +541,11 @@ async function startSession(request: StartRequest, token: number): Promise<void>
     playerVolume: previous.playerVolume,
     playerMuted: previous.playerMuted,
     isNativeMuted: previous.isNativeMuted,
+    activationPending: previous.activationPending,
   } : null;
   await stopSession(currentSession !== null && currentSession.request.tabId !== request.tabId);
   if (token !== latestStartToken || pendingStart?.token !== token) return;
-  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: preservedPlayerState?.playerVolume ?? 1, playerMuted: preservedPlayerState?.playerMuted ?? false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: preservedPlayerState?.isNativeMuted ?? false, isJocConfirmed: false, isPaused: request.paused, isBuffering: request.buffering, phase: request.buffering ? 'buffering' : request.paused ? 'paused' : 'preparing', stage: 'starting-audio', preparationTimer: null};
+  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: preservedPlayerState?.playerVolume ?? 1, playerMuted: preservedPlayerState?.playerMuted ?? false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: preservedPlayerState?.isNativeMuted ?? false, activationPending: preservedPlayerState?.activationPending ?? false, isJocConfirmed: false, isPaused: request.paused, isBuffering: request.buffering, phase: request.buffering ? 'buffering' : request.paused ? 'paused' : 'preparing', stage: 'starting-audio', preparationTimer: null};
   currentSession = session;
   session.preparationTimer = window.setTimeout((): void => {
     if (isCurrentSession(session) && !session.isJocConfirmed) void failSession(`OpenJOC ${session.stage} timed out before JOC PCM became available`);
@@ -595,15 +616,41 @@ function enqueueStopSession(announce: boolean, target: MediaSessionTarget): void
     });
 }
 
-async function fetchSegmentWithPageFallback(session: CmafIndexSession, reference: CmafSegmentReference, signal: AbortSignal, tabId: number, generation: number): Promise<ReadonlyArray<CmafSample>> {
-  try {
-    return await fetchCmafSegment(session, reference, signal);
-  } catch (error: unknown) {
-    if (signal.aborted || !(error instanceof Error) || !error.message.includes('status 403')) throw error;
-    const pageResponse = await requestPageRange(tabId, generation, session.url, reference.byteRangeStart, reference.byteRangeEnd, signal);
-    if (pageResponse.status !== 206) throw new Error(`page-context CMAF range request returned status ${pageResponse.status}`);
-    return parseCmafFragment(new Uint8Array(pageResponse.buffer), session.init.trackId);
+async function fetchSegmentWithPageFallback(session: CmafIndexSession, reference: CmafSegmentReference, signal: AbortSignal, tabId: number, generation: number): Promise<SegmentFetchResult> {
+  const urls = [session.url, ...session.fallbackUrls];
+  let lastError: Error | null = null;
+  for (let urlIndex = 0; urlIndex < urls.length; urlIndex += 1) {
+    const url = urls[urlIndex];
+    if (url === undefined) continue;
+    const candidateSession = {...session, url, fallbackUrls: urls.slice(urlIndex + 1)};
+    try {
+      return {samples: await fetchCmafSegment(candidateSession, reference, signal), session: candidateSession};
+    } catch (error: unknown) {
+      if (signal.aborted) throw error;
+      lastError = toError(error, 'failed to fetch Bilibili CMAF segment');
+      if (!isRetryableSegmentError(lastError)) throw lastError;
+      if (!lastError.message.includes('status 403')) continue;
+      try {
+        const pageResponse = await requestPageRange(tabId, generation, url, reference.byteRangeStart, reference.byteRangeEnd, signal);
+        if (pageResponse.status !== 206) throw new Error(`page-context CMAF range request returned status ${pageResponse.status}`);
+        return {samples: parseCmafFragment(new Uint8Array(pageResponse.buffer), session.init.trackId, session.init), session: candidateSession};
+      } catch (pageError: unknown) {
+        if (signal.aborted) throw pageError;
+        lastError = toError(pageError, 'page-context CMAF range fetch failed');
+      }
+    }
   }
+  throw lastError ?? new Error('Bilibili JOC stream unavailable');
+}
+
+function isRetryableSegmentError(error: Error): boolean {
+  return error.message.includes('status 403') || error.message.includes('request timed out');
+}
+
+function toError(error: unknown, fallback: string): Error {
+  if (error instanceof Error) return error;
+  if (isRecord(error) && typeof error.message === 'string') return new Error(error.message);
+  return new Error(fallback);
 }
 
 async function stopSession(announce: boolean, target: MediaSessionTarget | null = null): Promise<void> {
@@ -688,6 +735,7 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown): void => {
     case 'native-muted': {
       const session = currentSession;
       if (session === null || rawMessage.tabId !== session.request.tabId || rawMessage.generation !== session.request.generation) return;
+      session.activationPending = false;
       session.isNativeMuted = true;
       audioNode?.port.postMessage({type: 'arm', generation: session.audioGeneration});
       if (!session.isPaused && !session.isBuffering) {
@@ -702,14 +750,10 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown): void => {
       if (session === null || session.request.tabId !== rawMessage.tabId || session.request.requestId !== rawMessage.requestId || session.request.generation !== rawMessage.generation) return;
       session.playerVolume = rawMessage.volume;
       session.playerMuted = rawMessage.muted;
+      if (rawMessage.activate) session.activationPending = true;
       applyOutputGain(session, rawMessage.activate || rawMessage.muted || rawMessage.volume === 0);
-      if (rawMessage.activate && session.isJocConfirmed) {
-        session.isNativeMuted = true;
-        audioNode?.port.postMessage({type: 'arm', generation: session.audioGeneration});
-        if (!session.isPaused && !session.isBuffering) {
-          session.phase = 'active';
-          if (audioContext !== null) void audioContext.resume();
-        }
+      if (rawMessage.activate) {
+        activateNativeAudio(session);
         sendStatus(session.phase, null, session);
       }
       return;

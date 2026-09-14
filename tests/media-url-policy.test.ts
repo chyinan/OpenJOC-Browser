@@ -8,6 +8,8 @@ function assert(condition: boolean, message: string): void {
 
 function run(): void {
   assert(isAllowedBilibiliMediaUrl('https://upos-sz-example.bilivideo.com/path/audio.m4s?sig=secret', 'https://www.bilibili.com/video/BV1/'), 'approved bilivideo m4s is allowed');
+  assert(isAllowedBilibiliMediaUrl('https://upos-hz-mirrorakam.akamaized.net/path/audio.m4s?sig=secret', 'https://www.bilibili.com/video/BV1/'), 'approved Bilibili Akamai m4s is allowed');
+  assert(!isAllowedBilibiliMediaUrl('https://cdn.akamaized.net/path/audio.m4s', 'https://www.bilibili.com/video/BV1/'), 'unscoped Akamai host is rejected');
   assert(!isAllowedBilibiliMediaUrl('http://upos-sz-example.bilivideo.com/path/audio.m4s', 'https://www.bilibili.com/video/BV1/'), 'non-HTTPS media is rejected');
   assert(!isAllowedBilibiliMediaUrl('https://evil.example/path/audio.m4s', 'https://www.bilibili.com/video/BV1/'), 'unapproved host is rejected');
   assert(!isAllowedBilibiliMediaUrl('https://upos-sz-example.bilivideo.com/path/audio.mp4', 'https://www.bilibili.com/video/BV1/'), 'unapproved extension is rejected');

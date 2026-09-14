@@ -33,7 +33,7 @@ The Worker boundary carries validated commands and generation-scoped PCM/status 
 
 ## Security boundary
 
-The MAIN bridge accepts only messages from the current page window and posts to the fixed Bilibili origin. Candidate media URLs must be HTTPS `.m4s` resources on `bilivideo.com`, must be present in the current manifest, and must fit the four-megabyte range bound. Messages crossing the extension runtime are schema-checked and tied to the current tab, document, request, media key, and generation.
+The MAIN bridge accepts only messages from the current page window and posts to the fixed Bilibili origin. Candidate media URLs must be HTTPS `.m4s` resources on `bilivideo.com` or the scoped Bilibili Akamai pattern `upos-*.akamaized.net`, must be present in the current manifest, and must fit the four-megabyte range bound. Messages crossing the extension runtime are schema-checked and tied to the current tab, document, request, media key, and generation.
 
 No global fetch/XHR patch, SourceBuffer patch, MediaSource replacement, codec-support spoofing, remote executable code, remote WASM, externally connectable surface, or web-accessible resource is used.
 

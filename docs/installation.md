@@ -28,7 +28,7 @@ Open the browser extension page, find **OpenJOC Browser**, and choose **Remove**
 - `activeTab`: lets the toolbar action address the currently active page after a user click.
 - `offscreen`: creates the hidden audio document needed for Web Audio playback outside the page lifecycle.
 - `storage`: stores the four playback preferences locally.
-- `https://bilivideo.com/*` and `https://*.bilivideo.com/*`: permit bounded range requests for the exact Bilibili media URL selected by the current page session.
+- `https://bilivideo.com/*`, `https://*.bilivideo.com/*`, and `https://*.akamaized.net/*`: permit bounded range requests for the exact Bilibili media URL selected by the current page session. Runtime validation narrows Akamai usage to `upos-*.akamaized.net`.
 
 The content scripts run only on `https://www.bilibili.com/video/*`. No generic all-sites host permission is requested.
 

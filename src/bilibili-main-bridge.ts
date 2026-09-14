@@ -27,6 +27,7 @@ type MainBridgeManifest = Readonly<{
 const PAGE_ORIGIN = 'https://www.bilibili.com';
 const API_ORIGIN = 'https://api.bilibili.com';
 const BRIDGE_SOURCE = 'openjoc-bilibili';
+const AKAMAI_HOST_PATTERN = /^upos-[a-z0-9-]+\.akamaized\.net$/;
 let lastManifestUrl: string | null = null;
 let lastPageManifestFingerprint: string | null = null;
 const initialRouteKey = pageRouteKey();
@@ -350,7 +351,9 @@ function isAllowedMediaRangeMessage(value: Record<string, unknown>): boolean {
   const end = value.end as number;
   try {
     const url = new URL(value.url as string);
-    return knownMediaUrls.has(value.url as string) && url.protocol === 'https:' && url.username === '' && url.password === '' && (url.hostname === 'bilivideo.com' || url.hostname.endsWith('.bilivideo.com')) && url.pathname.toLowerCase().endsWith('.m4s') && start >= 0 && end >= start && end - start + 1 <= 4 * 1024 * 1024;
+    return knownMediaUrls.has(value.url as string) && url.protocol === 'https:' && url.username === '' && url.password === ''
+      && (url.hostname === 'bilivideo.com' || url.hostname.endsWith('.bilivideo.com') || AKAMAI_HOST_PATTERN.test(url.hostname))
+      && url.pathname.toLowerCase().endsWith('.m4s') && start >= 0 && end >= start && end - start + 1 <= 4 * 1024 * 1024;
   } catch {
     return false;
   }

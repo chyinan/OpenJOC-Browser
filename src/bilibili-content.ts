@@ -20,6 +20,7 @@ type ContentPageRangeResponse = Readonly<{readonly source: 'openjoc-bilibili'; r
 
 const PAGE_ORIGIN = 'https://www.bilibili.com';
 const MEDIA_SUFFIX = '.bilivideo.com';
+const AKAMAI_HOST_PATTERN = /^upos-[a-z0-9-]+\.akamaized\.net$/;
 const SAMPLE_RATE = 48_000;
 const CLOCK_INTERVAL_MS = 100;
 const SESSION_HEARTBEAT_INTERVAL_MS = 1_000;
@@ -208,7 +209,9 @@ function mediaKeyString(key: ContentMediaKey): string {
 function approvedMediaUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && url.username === '' && url.password === '' && (url.hostname === 'bilivideo.com' || url.hostname.endsWith(MEDIA_SUFFIX)) && url.pathname.toLowerCase().endsWith('.m4s');
+    return url.protocol === 'https:' && url.username === '' && url.password === ''
+      && (url.hostname === 'bilivideo.com' || url.hostname.endsWith(MEDIA_SUFFIX) || AKAMAI_HOST_PATTERN.test(url.hostname))
+      && url.pathname.toLowerCase().endsWith('.m4s');
   } catch {
     return false;
   }

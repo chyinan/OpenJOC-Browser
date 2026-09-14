@@ -15,7 +15,7 @@ The local player reads a user-selected `.ec3` file only after the user chooses i
 
 ## Where data goes
 
-The extension sends media requests only to Bilibili's playback API/page context and `bilivideo.com` media hosts needed for the selected session. Decoded audio, PCM, diagnostics, and lifecycle state remain in the browser. They are not sent to an OpenJOC server or third-party analytics service.
+The extension sends media requests only to Bilibili's playback API/page context and the `bilivideo.com` or scoped `upos-*.akamaized.net` media hosts needed for the selected session. Decoded audio, PCM, diagnostics, and lifecycle state remain in the browser. They are not sent to an OpenJOC server or third-party analytics service.
 
 The page-context fallback receives only an exact manifest-discovered media URL and bounded range. It is not a general page-requested fetch service. Signed query strings are not written to extension storage or diagnostics.
 
@@ -32,6 +32,6 @@ The extension does not store browsing history, visited URLs, media files, signed
 
 ## Permissions and hosts
 
-The `activeTab` permission supports a user-initiated toolbar toggle. `offscreen` supports the isolated Web Audio document. `storage` supports the four preferences above. The Bilibili content scripts match standard VOD pages, and the `bilivideo.com` host permissions allow the offscreen document to issue bounded range requests to the exact selected media host.
+The `activeTab` permission supports a user-initiated toolbar toggle. `offscreen` supports the isolated Web Audio document. `storage` supports the four preferences above. The Bilibili content scripts match standard VOD pages, and the `bilivideo.com` plus Akamai host permissions allow the offscreen document to issue bounded range requests to the exact selected media host; runtime validation rejects unrelated Akamai URLs.
 
 See [SECURITY.md](../SECURITY.md) for reporting and [the manifest review](release.md#manifest-review) for the current permission audit.

@@ -37,7 +37,7 @@ function u64(value: number): Array<number> {
   return [...u32(Math.floor(value / 0x1_0000_0000)), ...u32(value >>> 0)];
 }
 
-function makeInit(): Uint8Array {
+function makeInit(trexDefaults?: Readonly<{durationSamples: number; sizeBytes: number}>): Uint8Array {
   const mdhd = fullBox('mdhd', 0x0100_0000, [...u64(0), ...u64(0), ...u32(48_000), ...u64(0), 0, 0]);
   const hdlr = fullBox('hdlr', 0, [0, 0, 0, 0, ...Array.from('soun', (character) => character.charCodeAt(0)), ...Array<number>(12).fill(0)]);
   const dec3 = box('dec3', [0x20, 0x00, 0x20, 0x0f, 0x00, 0x01, 0x10]);
@@ -53,7 +53,10 @@ function makeInit(): Uint8Array {
     ...box('tkhd', [...Array<number>(12).fill(0), ...u32(1), ...Array<number>(52).fill(0)]),
     ...mdia,
   ]);
-  return new Uint8Array([...box('ftyp', [...Array<number>(16).fill(0)]), ...box('moov', trak)]);
+  const mvex = trexDefaults === undefined ? [] : box('mvex', fullBox('trex', 0, [
+    ...u32(1), ...u32(1), ...u32(trexDefaults.durationSamples), ...u32(trexDefaults.sizeBytes), ...u32(0),
+  ]));
+  return new Uint8Array([...box('ftyp', [...Array<number>(16).fill(0)]), ...box('moov', [...mvex, ...trak])]);
 }
 
 function makeSidx(): Uint8Array {
@@ -97,6 +100,20 @@ function makeFragment(): Uint8Array {
   return new Uint8Array([...patchedMoof, ...box('mdat', [...first, ...second])]);
 }
 
+function makeTrexDefaultFragment(): Uint8Array {
+  const first = Array<number>(4_096).fill(1);
+  const second = Array<number>(4_096).fill(2);
+  const tfhd = fullBox('tfhd', 0x0002_0000, [...u32(1)]);
+  const tfdt = fullBox('tfdt', 0x0100_0000, [...u64(1_536)]);
+  const makeMoof = (dataOffset: number): Array<number> => {
+    const trun = fullBox('trun', 0x0000_0001, [...u32(2), ...u32(dataOffset)]);
+    return box('moof', [...fullBox('mfhd', 0, [...u32(1)]), ...box('traf', [...tfhd, ...tfdt, ...trun])]);
+  };
+  const initialMoof = makeMoof(0);
+  const dataOffset = initialMoof.length + 8;
+  return new Uint8Array([...makeMoof(dataOffset), ...box('mdat', [...first, ...second])]);
+}
+
 function run(): void {
   const initBytes = makeInit();
   const init = parseCmafInitSegment(initBytes);
@@ -120,6 +137,14 @@ function run(): void {
   assert(samples[1]?.ptsSamples === 3_072, 'fragment advances PTS by duration');
   assert(samples[0]?.durationSamples === 1_536, 'fragment preserves duration');
   assert(samples[0]?.bytes[0] === 1 && samples[1]?.bytes[0] === 5, 'fragment preserves sample bytes');
+
+  const trexInit = parseCmafInitSegment(makeInit({durationSamples: 1_536, sizeBytes: 4_096}));
+  assert(trexInit.defaultSampleDuration === 1_536, 'init exposes trex default sample duration');
+  assert(trexInit.defaultSampleSize === 4_096, 'init exposes trex default sample size');
+  const trexSamples = parseCmafFragment(makeTrexDefaultFragment(), trexInit.trackId, trexInit);
+  assert(trexSamples.length === 2, 'fragment can use trex defaults when trun omits duration and size');
+  assert(trexSamples[1]?.ptsSamples === 3_072, 'trex default duration advances fragment PTS');
+  assert(trexSamples[1]?.bytes.length === 4_096, 'trex default size selects the complete sample');
 }
 
 run();

@@ -24,6 +24,7 @@ export type CmafIndexSession = Readonly<{
   readonly totalBytes: number;
   readonly init: CmafInitInfo;
   readonly index: CmafSegmentIndex;
+  readonly fallbackUrls: ReadonlyArray<string>;
 }>;
 
 type RangeResponse = Readonly<{
@@ -53,7 +54,7 @@ export async function fetchCmafIndex(options: CmafRangeOptions): Promise<CmafInd
       throw new Error('Bilibili CMAF segment range exceeds the media resource');
     }
   }
-  return {url: options.url, pageUrl: options.pageUrl, totalBytes: response.totalBytes, init, index};
+  return {url: options.url, pageUrl: options.pageUrl, totalBytes: response.totalBytes, init, index, fallbackUrls: []};
 }
 
 /** Fetches one indexed fMP4 fragment and returns its exact timestamped samples. */
@@ -69,7 +70,7 @@ export async function fetchCmafSegment(
   if (range.bytes.length > MAX_RANGE_BYTES) {
     throw new Error('Bilibili CMAF segment exceeds the bounded range limit');
   }
-  return parseCmafFragment(range.bytes, session.init.trackId);
+  return parseCmafFragment(range.bytes, session.init.trackId, session.init);
 }
 
 async function fetchRange(

@@ -78,6 +78,7 @@ async function createExtension(options = {}) {
         paused: pageOptions.paused ?? false, seeking: false, muted: pageOptions.muted ?? false, defaultMuted: false, volume: 1,
         currentTime: 0, readyState: 4, playbackRate: 1, clientWidth: 1280, clientHeight: 720,
       });
+      const candidate = pageOptions.candidate ?? {id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000, baseUrl: 'https://media.bilivideo.com/audio.m4s', backupUrls: []};
       const pageWindow = {
         addEventListener(name, listener) {windowEvents.set(name, listener);},
         postMessage(message) {queueMicrotask(() => nativeAudio.dispatch(message));}, setInterval(callback) {timers.push(callback); return timers.length;},
@@ -107,7 +108,7 @@ async function createExtension(options = {}) {
           windowEvents.get('message')({source: pageWindow, origin: 'https://www.bilibili.com', data: {
             source: 'openjoc-bilibili', type: 'manifest', pageOrigin: 'https://www.bilibili.com', pageUrl: 'https://www.bilibili.com/video/BVA/',
             mediaKey: {bvid: 'BVA', aid: 'A', cid: 'A'},
-            candidates: [{id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000, baseUrl: 'https://media.bilivideo.com/audio.m4s', backupUrls: []}],
+            candidates: [candidate],
           }});
         },
         unavailable() {
@@ -178,6 +179,32 @@ test('manual first play followed by saved automatic enable on repeated refreshes
   } finally {
     extension.close();
   }
+});
+
+test('overseas Akamai JOC candidate starts through the full extension chain', async () => {
+  const extension = await createExtension();
+  try {
+    const page = await extension.page('overseas-akamai', {candidate: {
+      id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000,
+      baseUrl: 'https://upos-hz-mirrorakam.akamaized.net/audio.m4s', backupUrls: ['https://upos-sz-mirrorcosov.bilivideo.com/audio.m4s'],
+    }});
+    page.manifest();
+    page.enable();
+    await page.active();
+    assert.equal(page.physicalMuted(), true, 'native audio is suppressed after Akamai playback is confirmed');
+  } finally {extension.close();}
+});
+
+test('play activation arriving before JOC profile confirmation is applied after confirmation', async () => {
+  const extension = await createExtension();
+  try {
+    const page = await extension.page('activation-race');
+    page.manifest();
+    page.enable();
+    page.event('play');
+    await page.active();
+    assert.equal(page.physicalMuted(), true, 'native audio remains suppressed after the early activation is deferred');
+  } finally {extension.close();}
 });
 
 test('Bilibili mute and volume operate through the full bridge without restarting playback', async () => {

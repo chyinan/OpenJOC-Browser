@@ -1,15 +1,15 @@
 # Release engineering
 
-## v0.1.0 release shape
+## Release artifact shape
 
 The official artifact is one Chromium ZIP:
 
-`OpenJOC-Browser-v0.1.0-chromium.zip`
+`OpenJOC-Browser-vX.Y.Z-chromium.zip`
 
 Edge and Chrome use the same Manifest V3 output. The ZIP expands to:
 
 ```text
-OpenJOC-Browser-v0.1.0/
+OpenJOC-Browser-vX.Y.Z/
   manifest.json
   service-worker.js
   offscreen.html
@@ -55,12 +55,12 @@ This is the local equivalent of the release job. It does not create a Git tag or
 
 ## Manifest review
 
-The v0.1.0 manifest review is PASS:
+The current manifest review is PASS:
 
 - `activeTab` is used by the user-initiated toolbar toggle.
 - `offscreen` is used for the hidden audio document.
 - `storage` is used for local playback preferences.
-- `https://bilivideo.com/*` and `https://*.bilivideo.com/*` are used for bounded selected-media range requests.
+- `https://bilivideo.com/*`, `https://*.bilivideo.com/*`, and `https://*.akamaized.net/*` are used for bounded selected-media range requests; Chrome match patterns cannot express the `upos-` host prefix, so runtime validation narrows Akamai usage to `upos-*.akamaized.net` at every message boundary.
 - Content scripts match only standard Bilibili VOD URLs.
 - There is no `all_urls`, `web_accessible_resources`, `externally_connectable`, cookie permission, or broad arbitrary-fetch permission.
 - `wasm-unsafe-eval` is limited to extension pages because WebAssembly instantiation needs it; no remote JavaScript or remote WASM is loaded.

@@ -181,3 +181,76 @@ test('a new tab retires the old tab and rejects its clock even when page generat
     runtime.close();
   }
 });
+
+test('a timed-out CMAF segment falls back to the next manifest mirror', async () => {
+  const primary = 'https://upos-hz-mirrorakam.akamaized.net/audio.m4s';
+  const backup = 'https://upos-sz-mirrorcosov.bilivideo.com/audio.m4s';
+  const requestedUrls = [];
+  const runtime = await createPlaybackRuntime({
+    candidate: {id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000, baseUrl: primary, backupUrls: [backup]},
+    onFetchSegment(session) {
+      requestedUrls.push(session.url);
+      if (session.url === primary) throw new Error('Bilibili CMAF range request timed out for bytes 100-200');
+    },
+  });
+  try {
+    runtime.start(1, 'segment-fallback');
+    try {
+      await runtime.active('segment-fallback');
+    } catch (error) {
+      throw new Error(`${error.message}; requested=${requestedUrls.join(',')}`);
+    }
+    assert.deepEqual(requestedUrls, [primary, backup, backup], 'a timed-out primary segment advances to the next mirror and stays there');
+  } finally {
+    runtime.close();
+  }
+});
+
+test('a 403 CMAF segment can fall back through the page context', async () => {
+  const primary = 'https://upos-hz-mirrorakam.akamaized.net/audio.m4s';
+  const pageRequests = [];
+  const runtime = await createPlaybackRuntime({
+    segments: 1,
+    candidate: {id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000, baseUrl: primary, backupUrls: []},
+    onFetchSegment() {
+      throw new Error('Bilibili CMAF range request returned status 403 for bytes 0-4095');
+    },
+    onPageRangeRequest(message, dispatch) {
+      pageRequests.push(message.url);
+      dispatch({target: 'offscreen', type: 'page-media-range-response', tabId: message.tabId, generation: message.generation, requestId: message.requestId, status: 206, contentRange: null, error: null, bufferBase64: btoa(String.fromCharCode(...new Uint8Array(4096).fill(1)))});
+    },
+  });
+  try {
+    runtime.start(1, 'segment-page-fallback');
+    await waitFor(() => runtime.messages.some(message => message.requestId === 'segment-page-fallback' && message.phase === 'active'), 'page-context fallback playback');
+    assert.deepEqual(pageRequests, [primary], 'a 403 segment uses the exact current URL through page context');
+  } finally {
+    runtime.close();
+  }
+});
+
+test('a failed 403 page-context fallback advances to the next manifest mirror', async () => {
+  const primary = 'https://upos-hz-mirrorakam.akamaized.net/audio.m4s';
+  const backup = 'https://upos-sz-mirrorcosov.bilivideo.com/audio.m4s';
+  const requestedUrls = [];
+  const pageRequests = [];
+  const runtime = await createPlaybackRuntime({
+    candidate: {id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1000000, baseUrl: primary, backupUrls: [backup]},
+    onFetchSegment(session) {
+      requestedUrls.push(session.url);
+      if (session.url === primary) throw new Error('Bilibili CMAF range request returned status 403 for bytes 0-4095');
+    },
+    onPageRangeRequest(message, dispatch) {
+      pageRequests.push(message.url);
+      dispatch({target: 'offscreen', type: 'page-media-range-response', tabId: message.tabId, generation: message.generation, requestId: message.requestId, status: 500, contentRange: null, error: 'page fallback unavailable', bufferBase64: ''});
+    },
+  });
+  try {
+    runtime.start(1, 'segment-page-fallback-next');
+    await runtime.active('segment-page-fallback-next');
+    assert.deepEqual(pageRequests, [primary], 'a 403 segment attempts the exact current URL through page context before changing mirrors');
+    assert.deepEqual(requestedUrls.slice(0, 2), [primary, backup], 'a failed page fallback continues to the next mirror');
+  } finally {
+    runtime.close();
+  }
+});
