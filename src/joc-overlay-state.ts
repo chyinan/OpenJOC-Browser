@@ -1,5 +1,6 @@
 // pattern: Functional Core
 
+import {DEFAULT_OVERLAY_LANGUAGE, normalizeOverlayLanguage, type OverlayLanguage} from './joc-overlay-i18n.js';
 import {normalizeOutputGainDb} from './output-gain.js';
 
 export type OverlayMode = 'hidden' | 'detected' | 'active' | 'collapsed' | 'diagnostics' | 'raw' | 'error' | 'nonjoc';
@@ -25,6 +26,7 @@ export type OverlayState = Readonly<{
   readonly dialnorm: DialnormMode;
   readonly gainDb: number;
   readonly alwaysEnabled: boolean;
+  readonly language: OverlayLanguage;
   readonly errorDetailsOpen: boolean;
   readonly hasJoc: boolean;
   readonly detectionDismissed: boolean;
@@ -49,6 +51,7 @@ export type OverlayEvent =
   | Readonly<{readonly type: 'set-renderer'; readonly renderer: OverlayRenderer}>
   | Readonly<{readonly type: 'set-dialnorm'; readonly mode: DialnormMode}>
   | Readonly<{readonly type: 'set-gain'; readonly gainDb: number}>
+  | Readonly<{readonly type: 'set-language'; readonly language: OverlayLanguage}>
   | Readonly<{readonly type: 'set-always-enabled'; readonly enabled: boolean}>;
 
 export type OverlayPlaybackPhase = 'disabled' | 'preparing' | 'ready' | 'active' | 'paused' | 'buffering' | 'error';
@@ -60,6 +63,7 @@ export function createOverlayState(): OverlayState {
     dialnorm: 'calibrated',
     gainDb: 0,
     alwaysEnabled: false,
+    language: DEFAULT_OVERLAY_LANGUAGE,
     errorDetailsOpen: false,
     hasJoc: false,
     detectionDismissed: false,
@@ -68,7 +72,7 @@ export function createOverlayState(): OverlayState {
 
 /** Resets page/display lifecycle while preserving user-selected audio policy. */
 export function resetOverlayState(state: Readonly<OverlayState>): OverlayState {
-  return {...createOverlayState(), renderer: state.renderer, dialnorm: state.dialnorm, gainDb: state.gainDb, alwaysEnabled: state.alwaysEnabled};
+  return {...createOverlayState(), renderer: state.renderer, dialnorm: state.dialnorm, gainDb: state.gainDb, alwaysEnabled: state.alwaysEnabled, language: state.language};
 }
 
 export function overlayRendererLabel(renderer: OverlayRenderer): string {
@@ -127,6 +131,8 @@ export function advanceOverlayState(state: Readonly<OverlayState>, event: Overla
       return {...state, dialnorm: event.mode};
     case 'set-gain':
       return {...state, gainDb: normalizeOutputGainDb(event.gainDb)};
+    case 'set-language':
+      return {...state, language: normalizeOverlayLanguage(event.language)};
     case 'set-always-enabled':
       return {...state, alwaysEnabled: event.enabled};
   }

@@ -26,6 +26,12 @@ Binaural uses a fixed virtual 7.1.4 layout and the built-in SADIE II D1 (KU100) 
 
 Open **高级** and use **自定义增益** for a separate output gain from −20 dB to +20 dB in 0.5 dB steps. The default is 0 dB. The setting is applied after rendering and is saved locally. Positive gain can clip already-loud material.
 
+## Interface language
+
+The panel interface defaults to Chinese. Open **高级** and use **语言** to switch between **简体中文** and **English**. The choice covers every panel label, including the detection notice, the active panel, the advanced diagnostics, the error panel, and their accessible names. The language is saved as a local preference, so a reload or a new video keeps the selected interface.
+
+The selector is part of the advanced layer only; the normal panel keeps its original layout and controls. English is a translation of the same interface, not a separate diagnostic mode.
+
 ## Diagnostics
 
 Open **高级** to see the current decoder, JOC profile, renderer, buffer, sync drift, average output level, underruns, decode p95, realtime factor, and WASM memory. Binaural mode also shows the virtual layout, HRTF source, and measured Binaural timing. See [diagnostics](diagnostics.md) for interpretation.

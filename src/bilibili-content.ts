@@ -2,6 +2,7 @@
 
 import {createJocOverlayController, type JocOverlayController} from './joc-overlay-controller.js';
 import {isRuntimeMessage, type PlaybackMetrics, type PlaybackPhase, type RendererMode} from './extension-protocol.js';
+import {normalizeOverlayLanguage, type OverlayLanguage} from './joc-overlay-i18n.js';
 import {type DialnormMode, type OverlayRenderer} from './joc-overlay-state.js';
 import {normalizeOutputGainDb} from './output-gain.js';
 import {acknowledgeStart, createStartHandshake, nextStartHandshakeAction, recordStartAttempt, shouldAcceptPlaybackStatus, shouldDispatchSessionRecovery, shouldExpirePlaybackStatus, shouldRestartAfterSeek, type StartHandshakeState} from './start-handshake.js';
@@ -29,6 +30,7 @@ const ALWAYS_ENABLED_STORAGE_KEY = 'alwaysEnableOpenJoc';
 const DIALNORM_STORAGE_KEY = 'dialnormMode';
 const RENDERER_STORAGE_KEY = 'rendererMode';
 const OUTPUT_GAIN_STORAGE_KEY = 'outputGainDb';
+const LANGUAGE_STORAGE_KEY = 'overlayLanguage';
 let video: HTMLVideoElement | null = null;
 let videoGeneration = 0;
 let latestManifest: ContentManifest | null = null;
@@ -39,12 +41,14 @@ let latestStatus: ContentStatus | null = null;
 let dialnormMode: DialnormMode = 'calibrated';
 let rendererMode: RendererMode = 'stereo';
 let outputGainDb = 0;
+let overlayLanguage: OverlayLanguage = normalizeOverlayLanguage(undefined);
 let alwaysEnableOpenJoc = false;
 let alwaysEnableAutoStartPending = false;
 let alwaysEnabledPreferenceChanged = false;
 let dialnormPreferenceChanged = false;
 let rendererPreferenceChanged = false;
 let outputGainPreferenceChanged = false;
+let languagePreferenceChanged = false;
 let playbackPreferencesLoaded = false;
 let deferredManualEnable: boolean | null = null;
 let startHandshake: StartHandshakeState = createStartHandshake();
@@ -96,6 +100,11 @@ const overlay: JocOverlayController = createJocOverlayController({
     if (isOpenJocRequested && activeStartRequestId !== null) {
       send({target: 'background', type: 'output-gain', requestId: activeStartRequestId, generation: videoGeneration, gainDb: outputGainDb});
     }
+  },
+  onLanguageChange: (language): void => {
+    languagePreferenceChanged = true;
+    overlayLanguage = normalizeOverlayLanguage(language);
+    void chrome.storage.local.set({[LANGUAGE_STORAGE_KEY]: overlayLanguage}).catch(() => undefined);
   },
   onReturnNative: (): void => {
     if (!playbackPreferencesLoaded) deferredManualEnable = false;
@@ -258,7 +267,7 @@ function maybeEnableAlways(): void {
 
 async function restorePlaybackPreferences(): Promise<void> {
   try {
-    const stored = await chrome.storage.local.get([ALWAYS_ENABLED_STORAGE_KEY, DIALNORM_STORAGE_KEY, RENDERER_STORAGE_KEY, OUTPUT_GAIN_STORAGE_KEY]);
+    const stored = await chrome.storage.local.get([ALWAYS_ENABLED_STORAGE_KEY, DIALNORM_STORAGE_KEY, RENDERER_STORAGE_KEY, OUTPUT_GAIN_STORAGE_KEY, LANGUAGE_STORAGE_KEY]);
     if (!dialnormPreferenceChanged) {
       dialnormMode = stored[DIALNORM_STORAGE_KEY] === 'unity' ? 'unity' : 'calibrated';
       overlay.setDialnorm(dialnormMode);
@@ -271,12 +280,16 @@ async function restorePlaybackPreferences(): Promise<void> {
       outputGainDb = normalizeOutputGainDb(stored[OUTPUT_GAIN_STORAGE_KEY]);
       overlay.setGainDb(outputGainDb);
     }
+    if (!languagePreferenceChanged) {
+      overlayLanguage = normalizeOverlayLanguage(stored[LANGUAGE_STORAGE_KEY]);
+      overlay.setLanguage(overlayLanguage);
+    }
     if (!alwaysEnabledPreferenceChanged) {
       alwaysEnableOpenJoc = stored[ALWAYS_ENABLED_STORAGE_KEY] === true;
       alwaysEnableAutoStartPending = alwaysEnableOpenJoc;
       overlay.setAlwaysEnabled(alwaysEnableOpenJoc);
     }
-    traceLifecycle('preference-restored', {alwaysEnabled: alwaysEnableOpenJoc, dialnorm: dialnormMode, renderer: rendererMode, gainDb: outputGainDb});
+    traceLifecycle('preference-restored', {alwaysEnabled: alwaysEnableOpenJoc, dialnorm: dialnormMode, renderer: rendererMode, gainDb: outputGainDb, language: overlayLanguage});
   } catch {
     // Keep the in-memory default when storage is unavailable.
   } finally {

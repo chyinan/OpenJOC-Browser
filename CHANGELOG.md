@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added an interface-language selector to the advanced panel. The controller now renders from a shared Chinese/English catalogue, defaults to Chinese, and saves the choice locally; the panel keeps its existing layout, controls, and styling.
+- Added catalogue, overlay, and packaged-bundle coverage for both interface languages.
+
 ## [0.1.6] - 2026-09-14
 
 ### Fixed
