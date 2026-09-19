@@ -460,22 +460,22 @@ function renderDiagnostics(state: OverlayState, status: OverlayStatus | null, ra
   return `<div class="diagnostics-section"><div class="diagnostics-heading"><h3>${escapeHtml(t('advancedDiagnostics'))}</h3><span>${escapeHtml(t('liveSnapshot'))}</span></div>
     ${renderLanguageControl(state, t)}
     ${renderGainControl(state, t)}
-    ${renderDiagGroup('Decoder', [{label: t('diagDecoder'), value: 'OpenJOC WASM', liveKey: null}])}
-    ${renderDiagGroup('Input', [{label: t('diagInput'), value: 'E-AC-3 JOC', liveKey: null}, {label: t('diagStatus'), value: playbackStatusLabel(status, t), liveKey: 'diag-status'}])}
-    ${renderDiagGroup('Profile', [{label: t('diagProfile'), value: status?.profile ?? t('waitingForProfile'), liveKey: 'diag-profile'}, {label: t('diagStage'), value: status?.metrics.stage ?? '—', liveKey: 'diag-stage'}])}
-    ${renderDiagGroup('Audio', [{label: t('diagSampleRate'), value: `${OVERLAY_SAMPLE_RATE} Hz`, liveKey: null}, {label: t('diagOutputChannels'), value: '2', liveKey: null}, {label: t('diagRenderer'), value: rendererLabel(state.renderer, t), liveKey: null}])}
-    ${renderDiagGroup('Realtime', [{label: t('diagDrift'), value: metrics?.driftMs === null || metrics === null ? '—' : formatNumber(metrics.driftMs, 1) + ' ms', liveKey: 'diag-drift'}, {label: t('diagLoudness'), value: metrics?.averageDb === null || metrics === null ? '—' : formatNumber(metrics.averageDb, 1) + ' dB', liveKey: 'diag-loudness'}, {label: t('diagBuffer'), value: metrics === null ? '—' : formatDuration(metrics.pcmBufferMs), liveKey: 'diag-buffer'}, {label: t('diagUnderruns'), value: metrics === null ? '—' : formatInteger(metrics.underrunCount), liveKey: 'diag-underruns'}, {label: t('diagDecodeP95'), value: metrics === null ? '—' : formatNumber(metrics.decodeP95Ms, 1) + ' ms', liveKey: 'diag-decode-p95'}, {label: t('diagRealtimeFactor'), value: metrics?.realtimeFactor === null || metrics === null ? '—' : formatNumber(metrics.realtimeFactor, 2) + '×', liveKey: 'diag-realtime'}])}
-    ${renderDiagGroup('Memory', [{label: t('diagWasmCurrent'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory'}, {label: t('diagWasmPeak'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory-peak'}])}
+    ${renderDiagGroup('decoder', [{label: t('diagDecoder'), value: 'OpenJOC WASM', liveKey: null}], t)}
+    ${renderDiagGroup('input', [{label: t('diagInput'), value: 'E-AC-3 JOC', liveKey: null}, {label: t('diagStatus'), value: playbackStatusLabel(status, t), liveKey: 'diag-status'}], t)}
+    ${renderDiagGroup('profile', [{label: t('diagProfile'), value: status?.profile ?? t('waitingForProfile'), liveKey: 'diag-profile'}, {label: t('diagStage'), value: status?.metrics.stage ?? '—', liveKey: 'diag-stage'}], t)}
+    ${renderDiagGroup('audio', [{label: t('diagSampleRate'), value: `${OVERLAY_SAMPLE_RATE} Hz`, liveKey: null}, {label: t('diagOutputChannels'), value: '2', liveKey: null}, {label: t('diagRenderer'), value: rendererLabel(state.renderer, t), liveKey: null}], t)}
+    ${renderDiagGroup('realtime', [{label: t('diagDrift'), value: metrics?.driftMs === null || metrics === null ? '—' : formatNumber(metrics.driftMs, 1) + ' ms', liveKey: 'diag-drift'}, {label: t('diagLoudness'), value: metrics?.averageDb === null || metrics === null ? '—' : formatNumber(metrics.averageDb, 1) + ' dB', liveKey: 'diag-loudness'}, {label: t('diagBuffer'), value: metrics === null ? '—' : formatDuration(metrics.pcmBufferMs), liveKey: 'diag-buffer'}, {label: t('diagUnderruns'), value: metrics === null ? '—' : formatInteger(metrics.underrunCount), liveKey: 'diag-underruns'}, {label: t('diagDecodeP95'), value: metrics === null ? '—' : formatNumber(metrics.decodeP95Ms, 1) + ' ms', liveKey: 'diag-decode-p95'}, {label: t('diagRealtimeFactor'), value: metrics?.realtimeFactor === null || metrics === null ? '—' : formatNumber(metrics.realtimeFactor, 2) + '×', liveKey: 'diag-realtime'}], t)}
+    ${renderDiagGroup('memory', [{label: t('diagWasmCurrent'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory'}, {label: t('diagWasmPeak'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory-peak'}], t)}
     <div class="diagnostics-actions">${raw}<button class="secondary-trigger" type="button" data-action="close-diagnostics" aria-expanded="true"><span>${escapeHtml(t('collapseDiagnostics'))}</span><span class="trigger-chevron up">›</span></button><span class="copy-status" data-copy-status aria-live="polite"></span></div>`;
 }
 
 function renderBinauralDiagnostics(metrics: PlaybackMetrics | null, t: OverlayTranslate): string {
-  return renderDiagGroup('Binaural', [
+  return renderDiagGroup('binaural', [
     {label: t('diagVirtualLayout'), value: metrics?.virtualLayout ?? t('defaultVirtualLayout'), liveKey: null},
     {label: t('diagHrtf'), value: metrics?.hrtf === null || metrics === null ? 'Built-in SADIE II D1 (Default)' : `${metrics.hrtf} (Default)`, liveKey: null},
     {label: t('diagBinauralLatency'), value: metrics?.binauralLatencyMs === null || metrics === null ? '—' : `${formatNumber(metrics.binauralLatencyMs, 2)} ms`, liveKey: 'diag-binaural-latency'},
     {label: t('diagBinauralP95'), value: metrics?.binauralP95Ms === null || metrics === null ? '—' : `${formatNumber(metrics.binauralP95Ms, 2)} ms`, liveKey: 'diag-binaural-p95'},
-  ]);
+  ], t);
 }
 
 function renderAlwaysEnabledControl(state: OverlayState, t: OverlayTranslate): string {
@@ -515,9 +515,23 @@ type DiagnosticRow = Readonly<{
   readonly liveKey: string | null;
 }>;
 
-function renderDiagGroup(title: string, rows: ReadonlyArray<DiagnosticRow>): string {
-  const group = `<section class="diag-group"><h4>${escapeHtml(title)}</h4>${rows.map((row) => `<div class="diag-row"><span>${escapeHtml(row.label)}</span><strong${row.liveKey === null ? '' : ` data-live="${row.liveKey}"`}>${escapeHtml(row.value)}</strong></div>`).join('')}</section>`;
-  return title === 'Audio' ? `${group}${binauralDiagnosticsMarkup}${alwaysEnabledMarkup}` : group;
+/** Stable group identity; the rendered heading always comes from the catalogue. */
+type DiagnosticGroupId = 'decoder' | 'input' | 'profile' | 'audio' | 'realtime' | 'memory' | 'binaural';
+
+const DIAGNOSTIC_GROUP_TITLES: Readonly<Record<DiagnosticGroupId, OverlayMessageKey>> = {
+  decoder: 'diagGroupDecoder',
+  input: 'diagGroupInput',
+  profile: 'diagGroupProfile',
+  audio: 'diagGroupAudio',
+  realtime: 'diagGroupRealtime',
+  memory: 'diagGroupMemory',
+  binaural: 'diagGroupBinaural',
+};
+
+function renderDiagGroup(group: DiagnosticGroupId, rows: ReadonlyArray<DiagnosticRow>, t: OverlayTranslate): string {
+  const title = t(DIAGNOSTIC_GROUP_TITLES[group]);
+  const markup = `<section class="diag-group"><h4>${escapeHtml(title)}</h4>${rows.map((row) => `<div class="diag-row"><span>${escapeHtml(row.label)}</span><strong${row.liveKey === null ? '' : ` data-live="${row.liveKey}"`}>${escapeHtml(row.value)}</strong></div>`).join('')}</section>`;
+  return group === 'audio' ? `${markup}${binauralDiagnosticsMarkup}${alwaysEnabledMarkup}` : markup;
 }
 
 function renderError(status: OverlayStatus | null, detailsOpen: boolean, t: OverlayTranslate): string {
