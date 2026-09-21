@@ -71,6 +71,7 @@ async function createExtension(options = {}) {
       let clockOffsetMs = 0;
       let currentRequestId = null;
       let hasCandidate = false;
+      let preferencesRestored = false;
       let uiDialnorm = 'calibrated';
       let uiRenderer = 'stereo-speakers';
       let uiGainDb = 0;
@@ -146,15 +147,16 @@ async function createExtension(options = {}) {
       }, {'joc-overlay-controller.js': {createJocOverlayController(options) {
         callbacks = options;
         return {
-          reset() {}, setManifest(value) {hasCandidate = value;}, setAlwaysEnabled() {},
+          reset() {}, setManifest(value) {hasCandidate = value;}, setAlwaysEnabled() {preferencesRestored = true;},
           setDialnorm(value) {uiDialnorm = value;},
           setRenderer(value) {uiRenderer = value;},
-          setGainDb(value) {uiGainDb = value;},
+          setGainDb(value) {uiGainDb = value;}, setLanguage() {},
           setStatus(value) {status = value;}, setRequested(value) {requested = value;}, setDebugSummary(value) {debug = value;},
         };
       }}});
       await content.load('bilibili-content.js');
-      await new Promise(setImmediate);
+      if (typeof options.beforeReadPreferences === 'function') await new Promise(setImmediate);
+      else await waitFor(() => preferencesRestored, `${documentId} playback preferences to restore`);
       return page;
     },
     close() {playback.close();},

@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {createPlaybackRuntime, createSourceRuntime} from './helpers/extension-runtime.mjs';
+import {createPlaybackRuntime, createSourceRuntime, waitFor} from './helpers/extension-runtime.mjs';
 
 test('long pause resumes a confirmed stream even when its last stage was fetching a segment', async () => {
   const playback = await createPlaybackRuntime();
@@ -16,6 +16,7 @@ test('long pause resumes a confirmed stream even when its last stage was fetchin
 
   let now = 0;
   let requested = false;
+  let preferencesRestored = false;
   const timers = [];
   const runtimeListeners = [];
   const pageListeners = [];
@@ -41,12 +42,12 @@ test('long pause resumes a confirmed stream even when its last stage was fetchin
     },
   }, {
     'joc-overlay-controller.js': {createJocOverlayController: () => ({
-      reset() {}, setManifest() {}, setStatus() {}, setAlwaysEnabled() {}, setDialnorm() {}, setRenderer() {}, setGainDb() {}, setDebugSummary() {},
+      reset() {}, setManifest() {}, setStatus() {}, setAlwaysEnabled() {preferencesRestored = true;}, setDialnorm() {}, setRenderer() {}, setGainDb() {}, setLanguage() {}, setDebugSummary() {},
       setRequested(value) {requested = value;},
     })},
   });
   await runtime.load('bilibili-content.js');
-  await new Promise(setImmediate);
+  await waitFor(() => preferencesRestored, 'playback preferences to restore');
   const manifest = {
     source: 'openjoc-bilibili', type: 'manifest', pageOrigin: 'https://www.bilibili.com', pageUrl: 'https://www.bilibili.com/video/BVA/',
     mediaKey: status.mediaKey,
@@ -90,7 +91,7 @@ test('a stale unavailable message from a previous same-page video cannot hide th
     },
   }, {
     'joc-overlay-controller.js': {createJocOverlayController: () => ({
-      reset() {}, setManifest(value) {manifestStates.push(value);}, setStatus() {}, setAlwaysEnabled() {}, setDialnorm() {}, setRenderer() {}, setGainDb() {}, setDebugSummary() {},
+      reset() {}, setManifest(value) {manifestStates.push(value);}, setStatus() {}, setAlwaysEnabled() {}, setDialnorm() {}, setRenderer() {}, setGainDb() {}, setLanguage() {}, setDebugSummary() {},
       setRequested() {}, toggleManually() {},
     })},
   });
