@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added an interface-language selector to the advanced panel. The controller now renders from a shared Chinese/English catalogue, defaults to Chinese, and saves the choice locally; the panel keeps its existing layout, controls, and styling. This includes the diagnostics group headings, which are keyed by a stable group id instead of a display string.
+- Added catalogue, overlay, and packaged-bundle coverage for both interface languages, including assertions on the rendered diagnostics group headings.
+
 ## [0.1.6] - 2026-09-14
 
 ### Fixed

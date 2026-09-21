@@ -54,11 +54,15 @@ function run(): void {
   assert(state.dialnorm === 'unity', 'dialnorm selection is retained in controller state');
   state = apply(state, {type: 'set-always-enabled', enabled: true});
   assert(state.alwaysEnabled, 'always-enable preference can be enabled');
+  assert(createOverlayState().language === 'zh-CN', 'the controller starts in the default Chinese interface');
+  state = apply(state, {type: 'set-language', language: 'en'});
+  assert(state.language === 'en', 'the advanced panel can switch the interface to English');
   const reset = resetOverlayState(state);
   assert(reset.mode === 'hidden', 'reset clears the display lifecycle');
   assert(reset.renderer === 'binaural-headphones', 'reset preserves the selected renderer');
   assert(reset.dialnorm === 'unity', 'reset preserves the selected Dialnorm mode');
   assert(reset.alwaysEnabled, 'reset preserves the always-enable preference');
+  assert(reset.language === 'en', 'reset preserves the selected interface language');
   assert(overlayRendererLabel(reset.renderer) === 'Binaural (Headphones)', 'renderer label describes the active renderer');
 
   assert(!needsOverlayMarkupRebuild('active', 'active'), 'repeated active status updates preserve interactive DOM');

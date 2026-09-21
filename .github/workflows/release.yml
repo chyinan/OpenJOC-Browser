@@ -55,6 +55,9 @@ jobs:
       - name: Build WASM and extension from source
         run: npm run build
 
+      - name: Check the packaged content script bundle
+        run: npm run test:bundle
+
       - name: Run lifecycle integration tests
         run: npm run test:lifecycle
 

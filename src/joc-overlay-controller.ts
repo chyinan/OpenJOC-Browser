@@ -1,7 +1,8 @@
 // pattern: Imperative Shell
 
 import {type PlaybackMetrics, type PlaybackPhase} from './extension-protocol.js';
-import {advanceOverlayState, createOverlayState, needsOverlayMarkupRebuild, overlayRendererLabel, resetOverlayState, OVERLAY_RENDERER_OPTIONS, type DialnormMode, type OverlayRenderer, type OverlayState} from './joc-overlay-state.js';
+import {OVERLAY_LANGUAGE_OPTIONS, isOverlayLanguage, normalizeOverlayLanguage, overlayMessage, type OverlayLanguage, type OverlayMessageKey} from './joc-overlay-i18n.js';
+import {advanceOverlayState, createOverlayState, needsOverlayMarkupRebuild, resetOverlayState, OVERLAY_RENDERER_OPTIONS, type DialnormMode, type OverlayRenderer, type OverlayState} from './joc-overlay-state.js';
 import {normalizeOutputGainDb, OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB, OUTPUT_GAIN_STEP_DB} from './output-gain.js';
 
 type OverlayStatus = Readonly<{
@@ -17,6 +18,9 @@ type OverlayEnableOptions = Readonly<{
   readonly dialnorm: DialnormMode;
 }>;
 
+/** Bound interface-message lookup for one language. */
+type OverlayTranslate = (key: OverlayMessageKey) => string;
+
 type JocOverlayCallbacks = Readonly<{
   readonly onEnable: (options: OverlayEnableOptions) => void;
   readonly onDisable: () => void;
@@ -24,6 +28,7 @@ type JocOverlayCallbacks = Readonly<{
   readonly onDialnormChange: (mode: DialnormMode) => void;
   readonly onAlwaysEnabledChange: (enabled: boolean) => void;
   readonly onGainChange: (gainDb: number) => void;
+  readonly onLanguageChange: (language: OverlayLanguage) => void;
   readonly onReturnNative: () => void;
 }>;
 
@@ -33,6 +38,7 @@ export type JocOverlayController = Readonly<{
   readonly setDialnorm: (mode: DialnormMode) => void;
   readonly setRenderer: (renderer: OverlayRenderer) => void;
   readonly setGainDb: (gainDb: number) => void;
+  readonly setLanguage: (language: OverlayLanguage) => void;
   readonly setDebugSummary: (summary: string) => void;
   readonly setRequested: (isRequested: boolean) => void;
   readonly setStatus: (status: OverlayStatus | null) => void;
@@ -54,7 +60,6 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
   const panelBody = document.createElement('div');
   panelBody.className = 'panel';
   panelBody.setAttribute('role', 'region');
-  panelBody.setAttribute('aria-label', 'OpenJOC 音频控制器');
   panelBody.hidden = true;
   shadow.append(panelBody);
   panel.dataset.openjoc = 'control';
@@ -63,6 +68,14 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
   let state: OverlayState = createOverlayState();
   let status: OverlayStatus | null = null;
   let copyStatusTimer: number | null = null;
+
+  function t(key: OverlayMessageKey): string {
+    return overlayMessage(state.language, key);
+  }
+
+  function applyPanelLabel(): void {
+    panelBody.setAttribute('aria-label', t('panelAriaLabel'));
+  }
 
   function updateDebugState(): void {
     panel.dataset.openjocState = JSON.stringify({
@@ -75,6 +88,7 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
       dialnorm: state.dialnorm,
       gainDb: state.gainDb,
       alwaysEnabled: state.alwaysEnabled,
+      language: state.language,
       statusPhase: status?.phase ?? null,
       statusReason: status?.reason ?? null,
     });
@@ -84,6 +98,7 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
     panelBody.hidden = state.mode === 'hidden';
     panelBody.dataset.mode = state.mode;
     panelBody.classList.toggle('detected', state.mode === 'detected');
+    applyPanelLabel();
     panelBody.innerHTML = renderMode(state, status);
     updateDebugState();
   }
@@ -96,14 +111,14 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
   function updateLiveStatus(): void {
     updateDebugState();
     const metrics = status?.metrics ?? null;
-    const health = healthValues(metrics);
-    setLiveText('status-label', playbackStatusLabel(status));
+    const health = healthValues(metrics, t);
+    setLiveText('status-label', playbackStatusLabel(status, t));
     const syncElement = setLiveText('health-sync', health.driftLabel);
     syncElement?.classList.remove('good', 'warn');
     if (health.driftClass !== '') syncElement?.classList.add(health.driftClass);
     setLiveText('health-loudness', health.loudnessLabel);
-    setLiveText('diag-status', playbackStatusLabel(status));
-    setLiveText('diag-profile', status?.profile ?? '等待 JOC 配置');
+    setLiveText('diag-status', playbackStatusLabel(status, t));
+    setLiveText('diag-profile', status?.profile ?? t('waitingForProfile'));
     setLiveText('diag-stage', status?.metrics.stage ?? '—');
     setLiveText('diag-drift', metrics?.driftMs === null || metrics === null ? '—' : `${formatNumber(metrics.driftMs, 1)} ms`);
     setLiveText('diag-loudness', metrics?.averageDb === null || metrics === null ? '—' : `${formatNumber(metrics.averageDb, 1)} dB`);
@@ -116,11 +131,11 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
     setLiveText('diag-binaural-latency', metrics?.binauralLatencyMs === null || metrics === null ? '—' : `${formatNumber(metrics.binauralLatencyMs, 2)} ms`);
     setLiveText('diag-binaural-p95', metrics?.binauralP95Ms === null || metrics === null ? '—' : `${formatNumber(metrics.binauralP95Ms, 2)} ms`);
     if (state.mode === 'error') {
-      const reason = status?.reason ?? 'OpenJOC 未返回更具体的失败原因。';
-      setLiveText('error-human-reason', humanErrorReason(reason));
+      const reason = status?.reason ?? t('errorDefaultReason');
+      setLiveText('error-human-reason', humanErrorReason(reason, t));
       setLiveText('error-code', errorCode(reason, status?.metrics.stage ?? null));
       setLiveText('error-reason', reason);
-      setLiveText('error-stage', status?.metrics.stage ?? 'unknown');
+      setLiveText('error-stage', status?.metrics.stage ?? t('errorUnknownStage'));
     }
     const rawElement = panelBody.querySelector<HTMLElement>('.raw-json');
     if (rawElement !== null) rawElement.textContent = diagnosticsJson(state, status);
@@ -211,6 +226,16 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
       const renderer = target.value === 'binaural-headphones' ? 'binaural-headphones' : 'stereo-speakers';
       transition({type: 'set-renderer', renderer});
       callbacks.onRendererChange(renderer);
+      return;
+    }
+    if (target.dataset.field === 'language') {
+      const language = normalizeOverlayLanguage(target.value);
+      if (language !== state.language) {
+        transition({type: 'set-language', language});
+        callbacks.onLanguageChange(language);
+      }
+      // Rebuild with the new catalogue even when the selection is unchanged.
+      else render();
     }
   }
 
@@ -260,9 +285,9 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
           input.remove();
         }
       }
-      showCopyStatus('已复制');
+      showCopyStatus(t('copied'));
     } catch {
-      showCopyStatus('复制失败，请手动选择');
+      showCopyStatus(t('copyFailed'));
     }
   }
 
@@ -303,6 +328,11 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
       if (state.gainDb === gainDb) return;
       transition({type: 'set-gain', gainDb});
     },
+    setLanguage(language: OverlayLanguage): void {
+      // Keeps the current interface when an unknown value arrives from storage.
+      if (!isOverlayLanguage(language) || state.language === language) return;
+      transition({type: 'set-language', language});
+    },
     setDebugSummary(summary: string): void {
       panel.dataset.debug = summary;
     },
@@ -338,67 +368,68 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
 }
 
 function renderMode(state: OverlayState, status: OverlayStatus | null): string {
+  const t: OverlayTranslate = (key): string => overlayMessage(state.language, key);
   switch (state.mode) {
     case 'detected':
-      return renderDetected();
+      return renderDetected(t);
     case 'collapsed':
-      return renderCollapsed(state);
+      return renderCollapsed(state, t);
     case 'diagnostics':
-      return renderExpanded(state, status, true, false);
+      return renderExpanded(state, status, true, false, t);
     case 'raw':
-      return renderExpanded(state, status, true, true);
+      return renderExpanded(state, status, true, true, t);
     case 'error':
-      return renderError(status, state.errorDetailsOpen);
+      return renderError(status, state.errorDetailsOpen, t);
     case 'nonjoc':
-      return renderNonJoc();
+      return renderNonJoc(t);
     case 'active':
-      return renderExpanded(state, status, false, false);
+      return renderExpanded(state, status, false, false, t);
     case 'hidden':
       return '';
   }
 }
 
-function renderDetected(): string {
+function renderDetected(t: OverlayTranslate): string {
   return `<section class="shell detected-panel" data-state="detected">
     <div class="detected-grid">
       <span class="status-dot checking" aria-hidden="true"></span>
-      <div class="detected-copy"><h2>JOC 音频已检测</h2><p>当前视频包含 E-AC-3 JOC 流。</p></div>
+      <div class="detected-copy"><h2>${escapeHtml(t('detectedTitle'))}</h2><p>${escapeHtml(t('detectedBody'))}</p></div>
       <div class="detected-actions">
-        <button class="icon-button detected-close" type="button" aria-label="关闭检测提示" data-action="dismiss-detection">${icon('close')}</button>
-        <button class="primary-button" type="button" data-action="enable">启用</button>
+        <button class="icon-button detected-close" type="button" aria-label="${escapeHtml(t('dismissDetection'))}" data-action="dismiss-detection">${icon('close')}</button>
+        <button class="primary-button" type="button" data-action="enable">${escapeHtml(t('enable'))}</button>
       </div>
     </div>
   </section>`;
 }
 
 
-function renderCollapsed(state: OverlayState): string {
+function renderCollapsed(state: OverlayState, t: OverlayTranslate): string {
   return `<section class="shell collapsed-panel" data-state="collapsed">
     <span class="status-dot active" aria-hidden="true"></span>
-    <div class="collapsed-copy"><strong>OpenJOC</strong><span>JOC ${'\u00b7'} ${overlayRendererLabel(state.renderer)}</span></div>
-    <button class="icon-button" type="button" aria-label="OpenJOC panel" data-action="expand">${icon('expand')}</button>
+    <div class="collapsed-copy"><strong>OpenJOC</strong><span>JOC ${'\u00b7'} ${escapeHtml(rendererLabel(state.renderer, t))}</span></div>
+    <button class="icon-button" type="button" aria-label="${escapeHtml(t('expandPanel'))}" data-action="expand">${icon('expand')}</button>
   </section>`;
 }
 
-function renderExpanded(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean): string {
-  const statusLabel = includeDiagnostics ? '已启用 · 高级信息' : playbackStatusLabel(status);
+function renderExpanded(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean, t: OverlayTranslate): string {
+  const statusLabel = includeDiagnostics ? t('statusEnabledDiagnostics') : playbackStatusLabel(status, t);
   return `<section class="shell expanded-panel" data-state="${includeDiagnostics ? 'diagnostics' : 'active'}">
     <header class="panel-header">
       <div class="brandline"><span class="status-dot active" aria-hidden="true"></span><div class="status-stack"><strong>OpenJOC</strong><span data-live="status-label">${escapeHtml(statusLabel)}</span></div></div>
-      <button class="icon-button" type="button" aria-label="折叠 OpenJOC 控制器" data-action="collapse">${icon('collapse')}</button>
+      <button class="icon-button" type="button" aria-label="${escapeHtml(t('collapsePanel'))}" data-action="collapse">${icon('collapse')}</button>
     </header>
-    ${renderNormalBody(state, status, includeDiagnostics, includeRaw)}
+    ${renderNormalBody(state, status, includeDiagnostics, includeRaw, t)}
   </section>`;
 }
 
-function renderNormalBody(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean): string {
-  const rendererOptions = OVERLAY_RENDERER_OPTIONS.map((option) => `<option value="${option.renderer}"${option.renderer === state.renderer ? ' selected' : ''}${option.enabled ? '' : ' disabled'}>${escapeHtml(option.label)}</option>`).join('');
+function renderNormalBody(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean, t: OverlayTranslate): string {
+  const rendererOptions = OVERLAY_RENDERER_OPTIONS.map((option) => `<option value="${option.renderer}"${option.renderer === state.renderer ? ' selected' : ''}${option.enabled ? '' : ' disabled'}>${escapeHtml(rendererLabel(option.renderer, t))}</option>`).join('');
   const metrics = status?.metrics ?? null;
-  const raw = includeRaw ? `<div class="raw-panel"><div class="raw-heading"><strong>原始诊断 JSON</strong><button class="text-button" type="button" data-action="copy-json">复制 JSON</button></div><pre class="raw-json">${escapeHtml(diagnosticsJson(state, status))}</pre></div>` : `<button class="secondary-trigger" type="button" data-action="open-raw" aria-expanded="false"><span>原始诊断 JSON</span><span class="trigger-chevron">›</span></button>`;
-  return `<div class="format-block"><p class="eyebrow">当前音频</p><h2 class="format-name">E-AC-3 JOC</h2><label class="field-label" for="openjoc-renderer">输出方式</label><select id="openjoc-renderer" class="select" data-field="renderer" aria-label="选择输出方式">${rendererOptions}</select></div>
-    <div class="field-block"><label class="field-label" for="openjoc-dialnorm">节目电平</label><select id="openjoc-dialnorm" class="select" data-field="dialnorm" aria-describedby="openjoc-dialnorm-help"><option value="calibrated"${state.dialnorm === 'calibrated' ? ' selected' : ''}>校准（推荐）</option><option value="unity"${state.dialnorm === 'unity' ? ' selected' : ''}>Unity / 兼容模式</option></select><p class="field-help" id="openjoc-dialnorm-help">${state.dialnorm === 'unity' ? '关闭 Dialnorm 衰减，优先保证兼容性。' : '遵循节目 Dialnorm 元数据。'}</p></div>
-    ${renderHealth(metrics)}
-    ${includeDiagnostics ? renderDiagnostics(state, status, raw) : `<div class="actions-block"><button class="primary-button action-button" type="button" data-action="disable">停用 OpenJOC</button><button class="secondary-trigger" type="button" data-action="open-diagnostics" aria-expanded="false"><span>高级 <small>技术信息</small></span><span class="trigger-chevron">›</span></button><span class="copy-status" data-copy-status aria-live="polite"></span></div>`}`;
+  const raw = includeRaw ? `<div class="raw-panel"><div class="raw-heading"><strong>${escapeHtml(t('rawDiagnosticsJson'))}</strong><button class="text-button" type="button" data-action="copy-json">${escapeHtml(t('copyJson'))}</button></div><pre class="raw-json">${escapeHtml(diagnosticsJson(state, status))}</pre></div>` : `<button class="secondary-trigger" type="button" data-action="open-raw" aria-expanded="false"><span>${escapeHtml(t('rawDiagnosticsJson'))}</span><span class="trigger-chevron">›</span></button>`;
+  return `<div class="format-block"><p class="eyebrow">${escapeHtml(t('currentAudio'))}</p><h2 class="format-name">E-AC-3 JOC</h2><label class="field-label" for="openjoc-renderer">${escapeHtml(t('outputMode'))}</label><select id="openjoc-renderer" class="select" data-field="renderer" aria-label="${escapeHtml(t('outputMode'))}">${rendererOptions}</select></div>
+    <div class="field-block"><label class="field-label" for="openjoc-dialnorm">${escapeHtml(t('dialnormField'))}</label><select id="openjoc-dialnorm" class="select" data-field="dialnorm" aria-describedby="openjoc-dialnorm-help"><option value="calibrated"${state.dialnorm === 'calibrated' ? ' selected' : ''}>${escapeHtml(t('dialnormCalibrated'))}</option><option value="unity"${state.dialnorm === 'unity' ? ' selected' : ''}>${escapeHtml(t('dialnormUnity'))}</option></select><p class="field-help" id="openjoc-dialnorm-help">${escapeHtml(state.dialnorm === 'unity' ? t('dialnormUnityHelp') : t('dialnormCalibratedHelp'))}</p></div>
+    ${renderHealth(metrics, t)}
+    ${includeDiagnostics ? renderDiagnostics(state, status, raw, t) : `<div class="actions-block"><button class="primary-button action-button" type="button" data-action="disable">${escapeHtml(t('disableOpenJoc'))}</button><button class="secondary-trigger" type="button" data-action="open-diagnostics" aria-expanded="false"><span>${escapeHtml(t('advancedEntry'))} <small>${escapeHtml(t('advancedEntryHint'))}</small></span><span class="trigger-chevron">›</span></button><span class="copy-status" data-copy-status aria-live="polite"></span></div>`}`;
 }
 
 type HealthValues = Readonly<{
@@ -407,48 +438,58 @@ type HealthValues = Readonly<{
   readonly driftClass: string;
 }>;
 
-function healthValues(metrics: PlaybackMetrics | null): HealthValues {
+function healthValues(metrics: PlaybackMetrics | null, t: OverlayTranslate): HealthValues {
   const drift = metrics?.driftMs ?? null;
   const averageDb = metrics?.averageDb ?? null;
   return {
-    driftLabel: drift === null ? '等待数据' : `${drift >= 0 ? '+' : ''}${formatNumber(drift, 0)} ms`,
-    loudnessLabel: averageDb === null ? '等待数据' : `${formatNumber(averageDb, 1)} dB`,
+    driftLabel: drift === null ? t('waitingForData') : `${drift >= 0 ? '+' : ''}${formatNumber(drift, 0)} ms`,
+    loudnessLabel: averageDb === null ? t('waitingForData') : `${formatNumber(averageDb, 1)} dB`,
     driftClass: drift === null ? '' : Math.abs(drift) <= 80 ? 'good' : 'warn',
   };
 }
 
-function renderHealth(metrics: PlaybackMetrics | null): string {
-  const health = healthValues(metrics);
-  return `<div class="health-block" aria-label="播放健康"><div class="metric-row"><span>音画同步</span><strong class="metric-value${health.driftClass === '' ? '' : ` ${health.driftClass}`}" data-live="health-sync">${escapeHtml(health.driftLabel)}</strong></div><div class="metric-row"><span>平均响度</span><strong class="metric-value" data-live="health-loudness">${escapeHtml(health.loudnessLabel)}</strong></div></div>`;
+function renderHealth(metrics: PlaybackMetrics | null, t: OverlayTranslate): string {
+  const health = healthValues(metrics, t);
+  return `<div class="health-block" aria-label="${escapeHtml(t('healthAriaLabel'))}"><div class="metric-row"><span>${escapeHtml(t('healthSync'))}</span><strong class="metric-value${health.driftClass === '' ? '' : ` ${health.driftClass}`}" data-live="health-sync">${escapeHtml(health.driftLabel)}</strong></div><div class="metric-row"><span>${escapeHtml(t('healthLoudness'))}</span><strong class="metric-value" data-live="health-loudness">${escapeHtml(health.loudnessLabel)}</strong></div></div>`;
 }
 
-function renderDiagnostics(state: OverlayState, status: OverlayStatus | null, raw: string): string {
+function renderDiagnostics(state: OverlayState, status: OverlayStatus | null, raw: string, t: OverlayTranslate): string {
   const metrics = status?.metrics ?? null;
-  binauralDiagnosticsMarkup = state.renderer === 'binaural-headphones' ? renderBinauralDiagnostics(metrics) : '';
-  alwaysEnabledMarkup = renderAlwaysEnabledControl(state);
-  return `<div class="diagnostics-section"><div class="diagnostics-heading"><h3>高级诊断</h3><span>实时快照</span></div>
-    ${renderGainControl(state)}
-    ${renderDiagGroup('Decoder', [{label: '解码器', value: 'OpenJOC WASM', liveKey: null}])}
-    ${renderDiagGroup('Input', [{label: '输入', value: 'E-AC-3 JOC', liveKey: null}, {label: '状态', value: playbackStatusLabel(status), liveKey: 'diag-status'}])}
-    ${renderDiagGroup('Profile', [{label: '配置', value: status?.profile ?? '等待 JOC 配置', liveKey: 'diag-profile'}, {label: '阶段', value: status?.metrics.stage ?? '—', liveKey: 'diag-stage'}])}
-    ${renderDiagGroup('Audio', [{label: '采样率', value: `${OVERLAY_SAMPLE_RATE} Hz`, liveKey: null}, {label: '输出声道', value: '2', liveKey: null}, {label: '渲染器', value: rendererLabel(state.renderer), liveKey: null}])}
-    ${renderDiagGroup('Realtime', [{label: '音画偏移', value: metrics?.driftMs === null || metrics === null ? '—' : formatNumber(metrics.driftMs, 1) + ' ms', liveKey: 'diag-drift'}, {label: '平均响度', value: metrics?.averageDb === null || metrics === null ? '—' : formatNumber(metrics.averageDb, 1) + ' dB', liveKey: 'diag-loudness'}, {label: '缓冲', value: metrics === null ? '—' : formatDuration(metrics.pcmBufferMs), liveKey: 'diag-buffer'}, {label: '欠载', value: metrics === null ? '—' : formatInteger(metrics.underrunCount), liveKey: 'diag-underruns'}, {label: '解码 p95', value: metrics === null ? '—' : formatNumber(metrics.decodeP95Ms, 1) + ' ms', liveKey: 'diag-decode-p95'}, {label: '实时因子', value: metrics?.realtimeFactor === null || metrics === null ? '—' : formatNumber(metrics.realtimeFactor, 2) + '×', liveKey: 'diag-realtime'}])}
-    ${renderDiagGroup('Memory', [{label: 'WASM 当前', value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory'}, {label: 'WASM 峰值', value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory-peak'}])}
-    <div class="diagnostics-actions">${raw}<button class="secondary-trigger" type="button" data-action="close-diagnostics" aria-expanded="true"><span>收起高级诊断</span><span class="trigger-chevron up">›</span></button><span class="copy-status" data-copy-status aria-live="polite"></span></div>`;
+  binauralDiagnosticsMarkup = state.renderer === 'binaural-headphones' ? renderBinauralDiagnostics(metrics, t) : '';
+  alwaysEnabledMarkup = renderAlwaysEnabledControl(state, t);
+  return `<div class="diagnostics-section"><div class="diagnostics-heading"><h3>${escapeHtml(t('advancedDiagnostics'))}</h3><span>${escapeHtml(t('liveSnapshot'))}</span></div>
+    ${renderLanguageControl(state, t)}
+    ${renderGainControl(state, t)}
+    ${renderDiagGroup('decoder', [{label: t('diagDecoder'), value: 'OpenJOC WASM', liveKey: null}], t)}
+    ${renderDiagGroup('input', [{label: t('diagInput'), value: 'E-AC-3 JOC', liveKey: null}, {label: t('diagStatus'), value: playbackStatusLabel(status, t), liveKey: 'diag-status'}], t)}
+    ${renderDiagGroup('profile', [{label: t('diagProfile'), value: status?.profile ?? t('waitingForProfile'), liveKey: 'diag-profile'}, {label: t('diagStage'), value: status?.metrics.stage ?? '—', liveKey: 'diag-stage'}], t)}
+    ${renderDiagGroup('audio', [{label: t('diagSampleRate'), value: `${OVERLAY_SAMPLE_RATE} Hz`, liveKey: null}, {label: t('diagOutputChannels'), value: '2', liveKey: null}, {label: t('diagRenderer'), value: rendererLabel(state.renderer, t), liveKey: null}], t)}
+    ${renderDiagGroup('realtime', [{label: t('diagDrift'), value: metrics?.driftMs === null || metrics === null ? '—' : formatNumber(metrics.driftMs, 1) + ' ms', liveKey: 'diag-drift'}, {label: t('diagLoudness'), value: metrics?.averageDb === null || metrics === null ? '—' : formatNumber(metrics.averageDb, 1) + ' dB', liveKey: 'diag-loudness'}, {label: t('diagBuffer'), value: metrics === null ? '—' : formatDuration(metrics.pcmBufferMs), liveKey: 'diag-buffer'}, {label: t('diagUnderruns'), value: metrics === null ? '—' : formatInteger(metrics.underrunCount), liveKey: 'diag-underruns'}, {label: t('diagDecodeP95'), value: metrics === null ? '—' : formatNumber(metrics.decodeP95Ms, 1) + ' ms', liveKey: 'diag-decode-p95'}, {label: t('diagRealtimeFactor'), value: metrics?.realtimeFactor === null || metrics === null ? '—' : formatNumber(metrics.realtimeFactor, 2) + '×', liveKey: 'diag-realtime'}], t)}
+    ${renderDiagGroup('memory', [{label: t('diagWasmCurrent'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory'}, {label: t('diagWasmPeak'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory-peak'}], t)}
+    <div class="diagnostics-actions">${raw}<button class="secondary-trigger" type="button" data-action="close-diagnostics" aria-expanded="true"><span>${escapeHtml(t('collapseDiagnostics'))}</span><span class="trigger-chevron up">›</span></button><span class="copy-status" data-copy-status aria-live="polite"></span></div>`;
 }
 
-function renderBinauralDiagnostics(metrics: PlaybackMetrics | null): string {
-  return renderDiagGroup('Binaural', [
-    {label: 'Virtual Layout', value: metrics?.virtualLayout ?? '7.1.4 (Default)', liveKey: null},
-    {label: 'HRTF', value: metrics?.hrtf === null || metrics === null ? 'Built-in SADIE II D1 (Default)' : `${metrics.hrtf} (Default)`, liveKey: null},
-    {label: 'Binaural latency', value: metrics?.binauralLatencyMs === null || metrics === null ? '—' : `${formatNumber(metrics.binauralLatencyMs, 2)} ms`, liveKey: 'diag-binaural-latency'},
-    {label: 'Binaural p95', value: metrics?.binauralP95Ms === null || metrics === null ? '—' : `${formatNumber(metrics.binauralP95Ms, 2)} ms`, liveKey: 'diag-binaural-p95'},
-  ]);
+function renderBinauralDiagnostics(metrics: PlaybackMetrics | null, t: OverlayTranslate): string {
+  return renderDiagGroup('binaural', [
+    {label: t('diagVirtualLayout'), value: metrics?.virtualLayout ?? t('defaultVirtualLayout'), liveKey: null},
+    {label: t('diagHrtf'), value: metrics?.hrtf === null || metrics === null ? 'Built-in SADIE II D1 (Default)' : `${metrics.hrtf} (Default)`, liveKey: null},
+    {label: t('diagBinauralLatency'), value: metrics?.binauralLatencyMs === null || metrics === null ? '—' : `${formatNumber(metrics.binauralLatencyMs, 2)} ms`, liveKey: 'diag-binaural-latency'},
+    {label: t('diagBinauralP95'), value: metrics?.binauralP95Ms === null || metrics === null ? '—' : `${formatNumber(metrics.binauralP95Ms, 2)} ms`, liveKey: 'diag-binaural-p95'},
+  ], t);
 }
 
-function renderAlwaysEnabledControl(state: OverlayState): string {
-  const label = '\u59cb\u7ec8\u542f\u7528 OpenJOC';
-  return `<button class="advanced-toggle" type="button" role="switch" aria-checked="${state.alwaysEnabled}" aria-label="${label}" data-action="toggle-always-enabled"><span class="advanced-toggle-label">${label}</span><span class="advanced-toggle-track" aria-hidden="true"><span class="advanced-toggle-thumb"></span></span></button>`;
+function renderAlwaysEnabledControl(state: OverlayState, t: OverlayTranslate): string {
+  const label = t('alwaysEnableOpenJoc');
+  return `<button class="advanced-toggle" type="button" role="switch" aria-checked="${state.alwaysEnabled}" aria-label="${escapeHtml(label)}" data-action="toggle-always-enabled"><span class="advanced-toggle-label">${escapeHtml(label)}</span><span class="advanced-toggle-track" aria-hidden="true"><span class="advanced-toggle-thumb"></span></span></button>`;
+}
+
+/** Language selection lives in the advanced layer and reuses the existing field styling. */
+function renderLanguageControl(state: OverlayState, t: OverlayTranslate): string {
+  const options = OVERLAY_LANGUAGE_OPTIONS.map((option) => `<option value="${option.language}"${option.language === state.language ? ' selected' : ''}>${escapeHtml(option.label)}</option>`).join('');
+  return `<section class="gain-setting" aria-label="${escapeHtml(t('languageField'))}">
+    <div class="gain-heading"><label for="openjoc-language">${escapeHtml(t('languageField'))}</label><select id="openjoc-language" class="select language-select" data-field="language" aria-describedby="openjoc-language-help">${options}</select></div>
+    <p class="field-help" id="openjoc-language-help">${escapeHtml(t('languageHelp'))}</p>
+  </section>`;
 }
 
 function gainLabel(gainDb: number): string {
@@ -459,12 +500,12 @@ function gainProgress(gainDb: number): number {
   return (gainDb - OUTPUT_GAIN_MIN_DB) * 100 / (OUTPUT_GAIN_MAX_DB - OUTPUT_GAIN_MIN_DB);
 }
 
-function renderGainControl(state: OverlayState): string {
-  return `<section class="gain-setting" aria-label="自定义增益">
-    <div class="gain-heading"><label for="openjoc-output-gain-range">自定义增益</label><div class="gain-value-control"><input id="openjoc-output-gain-value" class="gain-number" type="number" min="${OUTPUT_GAIN_MIN_DB}" max="${OUTPUT_GAIN_MAX_DB}" step="${OUTPUT_GAIN_STEP_DB}" value="${state.gainDb.toFixed(1)}" data-field="output-gain" aria-label="自定义增益数值" aria-describedby="openjoc-output-gain-help"><span>dB</span><button class="text-button gain-reset" type="button" data-action="reset-gain">重置</button></div></div>
+function renderGainControl(state: OverlayState, t: OverlayTranslate): string {
+  return `<section class="gain-setting" aria-label="${escapeHtml(t('customGain'))}">
+    <div class="gain-heading"><label for="openjoc-output-gain-range">${escapeHtml(t('customGain'))}</label><div class="gain-value-control"><input id="openjoc-output-gain-value" class="gain-number" type="number" min="${OUTPUT_GAIN_MIN_DB}" max="${OUTPUT_GAIN_MAX_DB}" step="${OUTPUT_GAIN_STEP_DB}" value="${state.gainDb.toFixed(1)}" data-field="output-gain" aria-label="${escapeHtml(t('customGainValueAria'))}" aria-describedby="openjoc-output-gain-help"><span>dB</span><button class="text-button gain-reset" type="button" data-action="reset-gain">${escapeHtml(t('reset'))}</button></div></div>
     <input id="openjoc-output-gain-range" class="gain-range" type="range" min="${OUTPUT_GAIN_MIN_DB}" max="${OUTPUT_GAIN_MAX_DB}" step="${OUTPUT_GAIN_STEP_DB}" value="${state.gainDb}" data-field="output-gain" aria-valuetext="${gainLabel(state.gainDb)}" aria-describedby="openjoc-output-gain-help" style="--gain-progress:${gainProgress(state.gainDb)}%">
     <div class="gain-limits" aria-hidden="true"><span>−20 dB</span><span>+20 dB</span></div>
-    <p class="field-help" id="openjoc-output-gain-help">0 dB 保持原音量，提升过高可能失真。</p>
+    <p class="field-help" id="openjoc-output-gain-help">${escapeHtml(t('customGainHelp'))}</p>
   </section>`;
 }
 
@@ -474,44 +515,58 @@ type DiagnosticRow = Readonly<{
   readonly liveKey: string | null;
 }>;
 
-function renderDiagGroup(title: string, rows: ReadonlyArray<DiagnosticRow>): string {
-  const group = `<section class="diag-group"><h4>${escapeHtml(title)}</h4>${rows.map((row) => `<div class="diag-row"><span>${escapeHtml(row.label)}</span><strong${row.liveKey === null ? '' : ` data-live="${row.liveKey}"`}>${escapeHtml(row.value)}</strong></div>`).join('')}</section>`;
-  return title === 'Audio' ? `${group}${binauralDiagnosticsMarkup}${alwaysEnabledMarkup}` : group;
+/** Stable group identity; the rendered heading always comes from the catalogue. */
+type DiagnosticGroupId = 'decoder' | 'input' | 'profile' | 'audio' | 'realtime' | 'memory' | 'binaural';
+
+const DIAGNOSTIC_GROUP_TITLES: Readonly<Record<DiagnosticGroupId, OverlayMessageKey>> = {
+  decoder: 'diagGroupDecoder',
+  input: 'diagGroupInput',
+  profile: 'diagGroupProfile',
+  audio: 'diagGroupAudio',
+  realtime: 'diagGroupRealtime',
+  memory: 'diagGroupMemory',
+  binaural: 'diagGroupBinaural',
+};
+
+function renderDiagGroup(group: DiagnosticGroupId, rows: ReadonlyArray<DiagnosticRow>, t: OverlayTranslate): string {
+  const title = t(DIAGNOSTIC_GROUP_TITLES[group]);
+  const markup = `<section class="diag-group"><h4>${escapeHtml(title)}</h4>${rows.map((row) => `<div class="diag-row"><span>${escapeHtml(row.label)}</span><strong${row.liveKey === null ? '' : ` data-live="${row.liveKey}"`}>${escapeHtml(row.value)}</strong></div>`).join('')}</section>`;
+  return group === 'audio' ? `${markup}${binauralDiagnosticsMarkup}${alwaysEnabledMarkup}` : markup;
 }
 
-function renderError(status: OverlayStatus | null, detailsOpen: boolean): string {
-  const reason = status?.reason ?? 'OpenJOC 未返回更具体的失败原因。';
-  const humanReason = humanErrorReason(reason);
+function renderError(status: OverlayStatus | null, detailsOpen: boolean, t: OverlayTranslate): string {
+  const reason = status?.reason ?? t('errorDefaultReason');
+  const humanReason = humanErrorReason(reason, t);
   const code = errorCode(reason, status?.metrics.stage ?? null);
-  const details = detailsOpen ? `<div class="error-details"><div><span>底层原因</span><strong data-live="error-reason">${escapeHtml(reason)}</strong></div><div><span>失败阶段</span><strong data-live="error-stage">${escapeHtml(status?.metrics.stage ?? 'unknown')}</strong></div><div><span>原生 Dolby 解码器</span><strong>未使用</strong></div></div>` : '';
-  return `<section class="shell error-panel" data-state="error"><header class="panel-header"><div class="brandline"><span class="status-dot error" aria-hidden="true"></span><div class="status-stack"><strong>OpenJOC</strong><span>播放失败</span></div></div><button class="icon-button" type="button" aria-label="关闭错误面板" data-action="close-error">${icon('close')}</button></header><div class="error-body"><p class="eyebrow">无法继续播放</p><h2>无法解码 JOC 音频</h2><div class="error-reason"><span>原因</span><p data-live="error-human-reason">${escapeHtml(humanReason)}</p></div><div class="error-code"><span>错误代码</span><strong data-live="error-code">${escapeHtml(code)}</strong></div><p class="error-hint">请尝试刷新页面后再试。</p><div class="error-actions"><button class="primary-button action-button" type="button" data-action="return-native">返回原生音频</button><button class="secondary-trigger" type="button" data-action="toggle-error-details" aria-expanded="${detailsOpen}"><span>详情</span><span class="trigger-chevron${detailsOpen ? ' open' : ''}">›</span></button>${details}</div></div></section>`;
+  const details = detailsOpen ? `<div class="error-details"><div><span>${escapeHtml(t('errorUnderlyingReason'))}</span><strong data-live="error-reason">${escapeHtml(reason)}</strong></div><div><span>${escapeHtml(t('errorFailedStage'))}</span><strong data-live="error-stage">${escapeHtml(status?.metrics.stage ?? t('errorUnknownStage'))}</strong></div><div><span>${escapeHtml(t('errorNativeDecoder'))}</span><strong>${escapeHtml(t('errorNativeDecoderUnused'))}</strong></div></div>` : '';
+  return `<section class="shell error-panel" data-state="error"><header class="panel-header"><div class="brandline"><span class="status-dot error" aria-hidden="true"></span><div class="status-stack"><strong>OpenJOC</strong><span>${escapeHtml(t('errorStatus'))}</span></div></div><button class="icon-button" type="button" aria-label="${escapeHtml(t('closeErrorPanel'))}" data-action="close-error">${icon('close')}</button></header><div class="error-body"><p class="eyebrow">${escapeHtml(t('errorEyebrow'))}</p><h2>${escapeHtml(t('errorTitle'))}</h2><div class="error-reason"><span>${escapeHtml(t('errorReasonLabel'))}</span><p data-live="error-human-reason">${escapeHtml(humanReason)}</p></div><div class="error-code"><span>${escapeHtml(t('errorCodeLabel'))}</span><strong data-live="error-code">${escapeHtml(code)}</strong></div><p class="error-hint">${escapeHtml(t('errorHint'))}</p><div class="error-actions"><button class="primary-button action-button" type="button" data-action="return-native">${escapeHtml(t('returnNativeAudio'))}</button><button class="secondary-trigger" type="button" data-action="toggle-error-details" aria-expanded="${detailsOpen}"><span>${escapeHtml(t('details'))}</span><span class="trigger-chevron${detailsOpen ? ' open' : ''}">›</span></button>${details}</div></div></section>`;
 }
 
-function renderNonJoc(): string {
-  return `<section class="shell nonjoc-panel" data-state="nonjoc"><div class="panel-header compact-header"><div class="brandline"><span class="status-dot inactive" aria-hidden="true"></span><div class="status-stack"><strong>OpenJOC</strong><span>页面音频状态</span></div></div><button class="icon-button" type="button" aria-label="关闭提示" data-action="close-nonjoc">${icon('close')}</button></div><div class="nonjoc-body"><h2>未检测到 JOC 音频</h2><p>当前页面保持原生音频输出。</p></div></section>`;
+function renderNonJoc(t: OverlayTranslate): string {
+  return `<section class="shell nonjoc-panel" data-state="nonjoc"><div class="panel-header compact-header"><div class="brandline"><span class="status-dot inactive" aria-hidden="true"></span><div class="status-stack"><strong>OpenJOC</strong><span>${escapeHtml(t('nonJocStatus'))}</span></div></div><button class="icon-button" type="button" aria-label="${escapeHtml(t('closeNotice'))}" data-action="close-nonjoc">${icon('close')}</button></div><div class="nonjoc-body"><h2>${escapeHtml(t('nonJocTitle'))}</h2><p>${escapeHtml(t('nonJocBody'))}</p></div></section>`;
 }
 
-function playbackStatusLabel(status: OverlayStatus | null): string {
+function playbackStatusLabel(status: OverlayStatus | null, t: OverlayTranslate): string {
   switch (status?.phase) {
-    case 'preparing': return '准备中';
-    case 'ready': return '已启用 · 等待音频';
-    case 'paused': return '已启用 · 已暂停';
-    case 'buffering': return '已启用 · 缓冲中';
-    case 'active': return '已启用';
-    default: return '已启用';
+    case 'preparing': return t('statusPreparing');
+    case 'ready': return t('statusReady');
+    case 'paused': return t('statusPaused');
+    case 'buffering': return t('statusBuffering');
+    case 'active': return t('statusActive');
+    default: return t('statusEnabled');
   }
 }
 
-function rendererLabel(renderer: OverlayRenderer): string {
-  return OVERLAY_RENDERER_OPTIONS.find((option) => option.renderer === renderer)?.label ?? '立体声（扬声器）';
+function rendererLabel(renderer: OverlayRenderer, t: OverlayTranslate): string {
+  return renderer === 'binaural-headphones' ? t('rendererBinaural') : t('rendererStereo');
 }
 
-function humanErrorReason(reason: string): string {
+function humanErrorReason(reason: string, t: OverlayTranslate): string {
   const normalized = reason.toLowerCase();
-  if (normalized.includes('playback rate')) return '当前播放速度不是 1.0x，OpenJOC 暂不支持该播放速度。';
-  if (normalized.includes('profile')) return '检测到 JOC 流，但当前流没有提供可用的 JOC 配置。';
-  if (normalized.includes('segment') || normalized.includes('media') || normalized.includes('cmaf')) return '检测到 JOC 流，但音频分片无法完整获取。';
-  return '检测到 JOC 流，但 OpenJOC 无法完成当前音频的解码。';
+  if (normalized.includes('playback rate')) return t('errorRateUnsupported');
+  if (normalized.includes('profile')) return t('errorProfileInvalid');
+  if (normalized.includes('segment') || normalized.includes('media') || normalized.includes('cmaf')) return t('errorMediaUnavailable');
+  return t('errorDecodeFailed');
 }
 
 function errorCode(reason: string, stage: string | null): string {
@@ -535,6 +590,7 @@ function diagnosticsJson(state: OverlayState, status: OverlayStatus | null): str
     dialnorm: state.dialnorm,
     outputGainDb: state.gainDb,
     alwaysEnabled: state.alwaysEnabled,
+    language: state.language,
     sampleRate: OVERLAY_SAMPLE_RATE,
     outputChannels: 2,
     driftMs: metrics?.driftMs ?? null,
@@ -650,6 +706,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
 .gain-setting { padding: 12px 16px 14px; border-top: 1px solid #f0f0f3; }
 .gain-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .gain-heading > label { font-size: 13px; font-weight: 600; }
+.language-select { width: 150px; min-height: 32px; padding: 0 26px 0 10px; font-size: 13px; }
 .gain-value-control { display: flex; align-items: center; gap: 6px; color: #6e6e73; font-size: 12px; }
 .gain-number { width: 61px; min-height: 30px; padding: 4px 6px; border: 1px solid #d2d2d7; border-radius: 7px; background: #fff; color: #1d1d1f; text-align: right; font-variant-numeric: tabular-nums; appearance: textfield; }
 .gain-number::-webkit-inner-spin-button, .gain-number::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
