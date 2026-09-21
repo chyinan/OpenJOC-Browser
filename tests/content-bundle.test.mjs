@@ -65,6 +65,10 @@ test('the content-script bundle wires the compiled modules into one classic scri
     for (const iife of ['__openjocOutputGain', '__openjocOverlayI18n', '__openjocOverlayState', '__openjocStartHandshake', '__openjocExtensionProtocol', '__openjocOverlayController']) {
       assert.ok(bundle.includes(`const ${iife} = (() => {`), `${iife} is defined by the bundle`);
     }
+    const controllerStart = bundle.indexOf('const __openjocOverlayController = (() => {');
+    const controllerEnd = bundle.indexOf('\n\n(() => {', controllerStart);
+    const controllerIife = bundle.slice(controllerStart, controllerEnd);
+    assert.match(controllerIife, /const \{[^}]*normalizeOverlayLanguage[^}]*\} = __openjocOverlayI18n;/u, 'the controller bundle receives the language normalizer it calls during select changes');
     assert.ok(!/\bimport\b|\bexport\b/u.test(bundle), 'the bundle keeps no module syntax for a classic content script');
     assert.ok(readFileSync(join(target, 'joc-overlay-i18n.js'), 'utf8').length > 0, 'the interface catalogues compile with the rest of the sources');
   } finally {
@@ -86,7 +90,7 @@ test('the content-script bundle initializes against a page with both interface l
       assert.equal(typeof i18n.overlayMessage('zh-CN', key), 'string', `${key} is available in Chinese too`);
     }
     assert.equal(i18n.overlayMessage('en', 'languageField'), 'Language', 'the shipped bundle carries the English catalogue');
-    assert.equal(i18n.overlayMessage('zh-CN', 'languageField'), '语言', 'the shipped bundle carries the Chinese catalogue');
+    assert.equal(i18n.overlayMessage('zh-CN', 'languageField'), '语言 / Language', 'the shipped bundle carries the bilingual default language label');
   } finally {
     rmSync(target, {recursive: true, force: true});
   }

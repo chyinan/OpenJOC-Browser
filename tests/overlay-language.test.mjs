@@ -133,6 +133,7 @@ test('the advanced panel switches the whole controller between Chinese and Engli
   document.panelBody.simulate('click', createActionTarget(document, 'open-diagnostics'));
   assert.ok(document.panelMarkup.includes('高级诊断'), 'the optional language selector lives in the advanced panel');
   assert.ok(document.panelMarkup.includes('data-field="language"'), 'the advanced panel exposes the language selector');
+  assert.ok(document.panelMarkup.includes('>语言 / Language</label>'), 'the default language selector is understandable before switching');
   assert.ok(document.panelMarkup.includes('<option value="zh-CN" selected>简体中文</option>'), 'Chinese is preselected');
   assert.ok(document.panelMarkup.includes('<option value="en">English</option>'), 'English is offered as a choice');
   assert.ok(document.panelMarkup.includes('切换控制器界面语言，并记住该选择。'), 'the language help text is translated');

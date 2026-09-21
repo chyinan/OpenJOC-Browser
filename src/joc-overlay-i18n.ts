@@ -164,7 +164,7 @@ const ZH_CN_MESSAGES: OverlayMessages = {
   disableOpenJoc: '停用 OpenJOC',
   advancedDiagnostics: '高级诊断',
   liveSnapshot: '实时快照',
-  languageField: '语言',
+  languageField: '语言 / Language',
   languageHelp: '切换控制器界面语言，并记住该选择。',
   customGain: '自定义增益',
   customGainValueAria: '自定义增益数值',

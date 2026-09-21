@@ -71,6 +71,7 @@ function run(): void {
 
   assert(overlayMessage('en', 'alwaysEnableOpenJoc') === 'Always enable OpenJOC', 'the advanced toggle has an English label');
   assert(overlayMessage('zh-CN', 'alwaysEnableOpenJoc') === '始终启用 OpenJOC', 'the advanced toggle keeps its Chinese label');
+  assert(overlayMessage('zh-CN', 'languageField') === '语言 / Language', 'the default language selector identifies itself bilingually');
   assert(overlayMessage('en', 'languageField') === 'Language', 'the language selector has an English label');
   assert(overlayMessage('en', 'customGain') === 'Custom gain', 'the gain setting is translated');
   assert(overlayMessage('en', 'liveSnapshot') === 'Live snapshot', 'the diagnostics heading value is translated');
