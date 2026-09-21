@@ -62,9 +62,9 @@ See [installation](docs/installation.md) for permission details and limitations.
 3. Choose **启用 OpenJOC**.
 4. Select **Stereo (Speakers)** or **Binaural (Headphones)** under **输出方式**.
 5. Select **Calibrated** or **Unity / 兼容模式** under **节目电平**.
-6. If needed, open **高级** to inspect diagnostics, change **自定义增益**, or switch **语言** between **简体中文** and **English**.
+6. If needed, open **高级** to inspect diagnostics, change **自定义增益**, or switch **语言** between **简体中文**, **English**, and **日本語**.
 
-**Calibrated** follows the programme Dialnorm metadata according to OpenJOC semantics. **Unity / 兼容模式** disables Dialnorm attenuation; it is not a volume boost. The custom gain control is separate and ranges from −20 dB to +20 dB in 0.5 dB steps. The panel interface defaults to Chinese; the **语言** selector in **高级** switches every label to English and is saved locally.
+**Calibrated** follows the programme Dialnorm metadata according to OpenJOC semantics. **Unity / 兼容模式** disables Dialnorm attenuation; it is not a volume boost. The custom gain control is separate and ranges from −20 dB to +20 dB in 0.5 dB steps. The panel interface defaults to Chinese; the **语言 / Language** selector in **高级** switches every label between Chinese, English, and Japanese and is saved locally.
 
 OpenJOC takes over only after a non-empty in-band JOC profile and usable PCM are confirmed. If it is disabled or fails, the original Bilibili audio is restored with the latest player mute and volume settings.
 
@@ -185,9 +185,9 @@ Bilibili 页面
 3. 选择 **启用 OpenJOC**。
 4. 在 **输出方式** 下选择 **Stereo (Speakers)** 或 **Binaural (Headphones)**。
 5. 在 **节目电平** 下选择 **Calibrated** 或 **Unity / 兼容模式**。
-6. 如有需要，打开 **高级** 查看诊断信息、修改 **自定义增益**，或将 **语言** 在 **简体中文** 和 **English** 之间切换。
+6. 如有需要，打开 **高级** 查看诊断信息、修改 **自定义增益**，或将 **语言 / Language** 在 **简体中文**、**English** 和 **日本語** 之间切换。
 
-**Calibrated** 按照 OpenJOC 的语义使用节目 Dialnorm 元数据。**Unity / 兼容模式** 会停用 Dialnorm 衰减，但不会提升音量。自定义增益控制独立生效，范围为 −20 dB 至 +20 dB，步进为 0.5 dB。面板默认使用中文；**高级** 中的 **语言** 选择会把所有界面文字切换为英文，并在本地保存该选择。
+**Calibrated** 按照 OpenJOC 的语义使用节目 Dialnorm 元数据。**Unity / 兼容模式** 会停用 Dialnorm 衰减，但不会提升音量。自定义增益控制独立生效，范围为 −20 dB 至 +20 dB，步进为 0.5 dB。面板默认使用中文；**高级** 中的 **语言 / Language** 选择会把所有界面文字切换为中文、英文或日文，并在本地保存该选择。
 
 只有在确认存在非空的带内 JOC 配置并获得可用 PCM 后，OpenJOC 才会接管播放。如果扩展被停用或发生故障，原始 Bilibili 音频会恢复，并沿用播放器最新的静音和音量设置。
 

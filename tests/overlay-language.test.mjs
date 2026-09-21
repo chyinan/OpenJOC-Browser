@@ -113,7 +113,7 @@ function createLanguageField(document, language) {
   return field;
 }
 
-test('the advanced panel switches the whole controller between Chinese and English', async () => {
+test('the advanced panel switches the whole controller between supported languages', async () => {
   const document = createFakeDocument();
   const runtime = createSourceRuntime({document, window: {setTimeout() {return 1;}, clearTimeout() {}}, HTMLInputElement: FakeElement, HTMLSelectElement: FakeSelectElement, Element: FakeElement});
   const {createJocOverlayController} = await runtime.load('joc-overlay-controller.js');
@@ -147,8 +147,17 @@ test('the advanced panel switches the whole controller between Chinese and Engli
     assert.ok(!chineseGroups.includes(heading), `the Chinese interface does not fall back to the English ${heading} group heading`);
   }
 
+  document.panelBody.simulate('change', createLanguageField(document, 'ja'));
+  assert.deepEqual(changes, ['ja'], 'the Japanese language change is reported to the content script');
+  assert.equal(JSON.parse(document.panelHost.dataset.openjocState).language, 'ja', 'the debug state follows the Japanese selection');
+  assert.ok(document.panelMarkup.includes('詳細診断'), 'the advanced panel switches to Japanese');
+  assert.ok(document.panelMarkup.includes('>言語</label>'), 'the Japanese language selector label is rendered');
+  assert.ok(document.panelMarkup.includes('コントローラーの言語を切り替え、選択を記憶します。'), 'the Japanese help text is translated');
+  assert.ok(document.panelMarkup.includes('<option value="ja" selected>日本語</option>'), 'the selector shows Japanese as active');
+  assert.deepEqual(sortedRenderedDiagGroupHeadings(document.panelMarkup), diagGroupHeadings('ja'), 'every diagnostics group heading renders in Japanese');
+
   document.panelBody.simulate('change', createLanguageField(document, 'en'));
-  assert.deepEqual(changes, ['en'], 'the language change is reported to the content script');
+  assert.deepEqual(changes, ['ja', 'en'], 'the English language change is reported to the content script');
   assert.equal(JSON.parse(document.panelHost.dataset.openjocState).language, 'en', 'the debug state follows the selection');
   assert.ok(document.panelMarkup.includes('Hide advanced diagnostics'), 'the advanced panel switches to English');
   assert.ok(document.panelMarkup.includes('Calibrated (Recommended)'), 'the program-level options are translated');
@@ -160,13 +169,13 @@ test('the advanced panel switches the whole controller between Chinese and Engli
   assert.deepEqual(sortedRenderedDiagGroupHeadings(document.panelMarkup), diagGroupHeadings('en'), 'every diagnostics group heading renders in English');
 
   document.panelBody.simulate('change', createLanguageField(document, 'zh-CN'));
-  assert.deepEqual(changes, ['en', 'zh-CN'], 'switching back reports the Chinese choice');
+  assert.deepEqual(changes, ['ja', 'en', 'zh-CN'], 'switching back reports the Chinese choice');
   assert.ok(document.panelMarkup.includes('收起高级诊断'), 'the advanced panel returns to Chinese');
   assert.ok(document.panelMarkup.includes('高级诊断'), 'the advanced heading is Chinese again');
   assert.deepEqual(sortedRenderedDiagGroupHeadings(document.panelMarkup), diagGroupHeadings('zh-CN'), 'the diagnostics group headings return to Chinese');
 
   document.panelBody.simulate('change', createLanguageField(document, 'fr'));
-  assert.deepEqual(changes, ['en', 'zh-CN'], 'an unsupported value reports nothing');
+  assert.deepEqual(changes, ['ja', 'en', 'zh-CN'], 'an unsupported value reports nothing');
   assert.ok(document.panelMarkup.includes('收起高级诊断'), 'an unsupported value keeps the current language');
 
   document.panelBody.simulate('click', createActionTarget(document, 'close-diagnostics'));

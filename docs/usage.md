@@ -28,7 +28,7 @@ Open **高级** and use **自定义增益** for a separate output gain from −2
 
 ## Interface language
 
-The panel interface defaults to Chinese. Open **高级** and use **语言** to switch between **简体中文** and **English**. The choice covers every panel label, including the detection notice, the active panel, the advanced diagnostics, the error panel, and their accessible names. The language is saved as a local preference, so a reload or a new video keeps the selected interface.
+The panel interface defaults to Chinese. Open **高级** and use **语言 / Language** to switch between **简体中文**, **English**, and **日本語**. The choice covers every panel label, including the detection notice, the active panel, the advanced diagnostics, the error panel, and their accessible names. The language is saved as a local preference, so a reload or a new video keeps the selected interface.
 
 The selector is part of the advanced layer only; the normal panel keeps its original layout and controls. English is a translation of the same interface, not a separate diagnostic mode.
 

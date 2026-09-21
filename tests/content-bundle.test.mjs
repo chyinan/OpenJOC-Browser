@@ -88,9 +88,11 @@ test('the content-script bundle initializes against a page with both interface l
     for (const key of ['panelAriaLabel', 'languageField', 'advancedDiagnostics', 'alwaysEnableOpenJoc']) {
       assert.equal(typeof i18n.overlayMessage('en', key), 'string', `${key} is available to the shipped controller`);
       assert.equal(typeof i18n.overlayMessage('zh-CN', key), 'string', `${key} is available in Chinese too`);
+      assert.equal(typeof i18n.overlayMessage('ja', key), 'string', `${key} is available in Japanese too`);
     }
     assert.equal(i18n.overlayMessage('en', 'languageField'), 'Language', 'the shipped bundle carries the English catalogue');
     assert.equal(i18n.overlayMessage('zh-CN', 'languageField'), '语言 / Language', 'the shipped bundle carries the bilingual default language label');
+    assert.equal(i18n.overlayMessage('ja', 'languageField'), '言語', 'the shipped bundle carries the Japanese catalogue');
   } finally {
     rmSync(target, {recursive: true, force: true});
   }
