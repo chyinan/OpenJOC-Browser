@@ -10,7 +10,8 @@ function assert(condition: boolean, message: string): void {
 const RENDERED_KEYS: ReadonlyArray<OverlayMessageKey> = [
   'panelAriaLabel', 'detectedTitle', 'detectedBody', 'dismissDetection', 'enable', 'enableOpenJoc',
   'expandPanel', 'collapsePanel', 'closeErrorPanel', 'closeNotice', 'statusEnabledDiagnostics',
-  'statusPreparing', 'statusReady', 'statusPaused', 'statusBuffering', 'statusActive', 'statusEnabled',
+  'statusPreparing', 'hrtfVerifying', 'hrtfPreparing', 'hrtfFallback',
+  'statusReady', 'statusPaused', 'statusBuffering', 'statusActive', 'statusEnabled',
   'currentAudio', 'outputMode', 'rendererStereo', 'rendererBinaural', 'dialnormField', 'dialnormCalibrated',
   'dialnormUnity', 'dialnormCalibratedHelp', 'dialnormUnityHelp', 'healthAriaLabel', 'healthSync',
   'healthLoudness', 'waitingForData', 'advancedEntry', 'advancedEntryHint', 'disableOpenJoc',

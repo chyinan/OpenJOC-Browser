@@ -7,22 +7,11 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createContentBundle} from './bundle-content.mjs';
 import {createTypeScriptCommand} from './build-command.mjs';
-import {validatePinnedHrtfAssetBaseUrl} from './hrtf-release-gate.mjs';
 import {OPENJOC_SOURCE_PIN, resolveOpenjocRoot} from './openjoc-source.mjs';
 
 const browserRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const openjocRoot = await resolveOpenjocRoot();
 const cargo = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
-const hrtfAssetReleaseTag = 'openjoc-hrtf-v2.0.0';
-const hrtfPackageKind = argumentValue('--hrtf-package') ?? process.env.OPENJOC_HRTF_PACKAGE ?? 'standard';
-const hrtfAssetBaseUrl = validatePinnedHrtfAssetBaseUrl(
-  process.env.OPENJOC_HRTF_ASSET_BASE_URL
-    ?? `https://github.com/chyinan/OpenJOC/releases/download/${hrtfAssetReleaseTag}/`,
-  hrtfAssetReleaseTag,
-);
-if (hrtfPackageKind !== 'standard' && hrtfPackageKind !== 'full') {
-  throw new Error(`invalid HRTF package kind: ${hrtfPackageKind}`);
-}
 
 function run(command, arguments_, cwd) {
   const result = spawnSync(command, arguments_, {cwd, stdio: 'inherit'});
@@ -81,11 +70,6 @@ function rustAssetMetadata(sourceRoot, presetId) {
   };
 }
 
-function argumentValue(name) {
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : undefined;
-}
-
 function rustRegistryIds(sourceRoot) {
   const source = readFileSync(join(sourceRoot, 'crates', 'openjoc-sofa', 'src', 'builtin_hrtf.rs'), 'utf8');
   const registry = source.match(/pub const BUILTIN_HRTF_REGISTRY:\s*\[BuiltinHrtf;\s*\d+\]\s*=\s*\[([\s\S]*?)\];/)?.[1];
@@ -125,7 +109,6 @@ run(cargo, [
 const typeScriptCommand = createTypeScriptCommand(browserRoot, process.execPath);
 run(typeScriptCommand.executable, typeScriptCommand.arguments, browserRoot);
 const {HRTF_ASSET_VERSION, HRTF_PRESET_OPTIONS, hrtfAssetMetadata} = await import(new URL('../extension/hrtf-presets.js', import.meta.url));
-if (HRTF_ASSET_VERSION !== hrtfAssetReleaseTag) throw new Error('HRTF asset tag does not match the compiled preset registry');
 
 writeFileSync(join(browserRoot, 'extension', 'bilibili-content.bundle.js'), createContentBundle(join(browserRoot, 'extension')));
 
@@ -161,9 +144,7 @@ const registryNames = registryAssets.map((asset) => asset.fileName);
 if (JSON.stringify(sourceHrtfAssets) !== JSON.stringify(registryNames)) {
   throw new Error(`built-in HRTF source files do not match the preset registry: ${sourceHrtfAssets.join(', ')}`);
 }
-const bundledPresetIds = hrtfPackageKind === 'full'
-  ? HRTF_PRESET_OPTIONS.map((preset) => preset.id)
-  : ['sadie-ii-d1-ku100'];
+const bundledPresetIds = HRTF_PRESET_OPTIONS.map((preset) => preset.id);
 const bundledAssets = registryAssets.filter((asset) => bundledPresetIds.includes(asset.presetId));
 const bundledAssetNames = bundledAssets.map((asset) => asset.fileName).sort();
 const expectedAssetNames = new Set(bundledAssetNames);
@@ -186,8 +167,7 @@ for (const metadata of registryAssets) {
 const hrtfManifest = {
   schemaVersion: 1,
   assetVersion: HRTF_ASSET_VERSION,
-  packageKind: hrtfPackageKind,
-  baseUrl: hrtfAssetBaseUrl.href,
+  packageKind: 'standard',
   bundledPresets: bundledPresetIds,
   assets: Object.fromEntries(registryAssets.map((asset) => [asset.presetId, {
     presetId: asset.presetId,
@@ -195,7 +175,6 @@ const hrtfManifest = {
     fileName: asset.fileName,
     byteLength: asset.byteLength,
     sha256: asset.sha256,
-    url: new URL(asset.fileName, hrtfAssetBaseUrl).href,
     dataset: asset.dataset,
     source: asset.source,
     authorsInstitution: asset.authorsInstitution,
@@ -233,7 +212,7 @@ writeFileSync(join(wasmOutput, 'openjoc-build-info.json'), `${JSON.stringify({
   sourceCommit: sourceCommitResult?.status === 0 ? sourceCommitResult.stdout.trim() : sourceArchivePin,
   sourceDirty: sourceStatusResult?.status === 0 ? sourceStatusResult.stdout.trim().length > 0 : null,
   sourceIsArchive: !sourceIsGitCheckout && sourceArchivePin !== null,
-  hrtfPackage: hrtfPackageKind,
+  hrtfPackage: 'standard',
   hrtfAssets: bundledAssetNames,
   hrtfEmbedding: false,
 }, null, 2)}\n`);

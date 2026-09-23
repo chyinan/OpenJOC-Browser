@@ -25,7 +25,7 @@ The Browser project does not relabel the HRTF measurements as original OpenJOC d
 
 ## Additional built-in HRTFs
 
-The Browser release packages all three versioned `.ojhrtf` assets separately
+The Browser release packages both versioned `.ojhrtf` assets separately
 from the WASM renderer. Only the selected profile is fetched into WASM memory.
 The asset envelope contains a payload SHA-256, and the runtime also checks the
 complete asset against the OpenJOC registry before parsing.
@@ -60,27 +60,6 @@ complete asset against the OpenJOC registry before parsing.
   `88cdc843aff4a69c90465e36ab573e9b073c0b7675ce909d6900dbbc49a5ed95`.
 - Packaged `.ojhrtf` v2: 18,374,724 bytes; SHA-256
   `b2f42ca2ce9ef2dfa7e3eff263543c4f306d0ac95bd684cf5ca344c88d6bd461`.
-
-### Aachen High-Resolution KEMAR
-
-- Authors/institution: Hark Braren and Janina Fels, Institute of Technical
-  Acoustics, RWTH Aachen University; DOI
-  [10.18154/RWTH-2020-11307](https://doi.org/10.18154/RWTH-2020-11307).
-- Official source: [Aachen SOFA dataset](https://publications.rwth-aachen.de/record/807373/files/Kemar_HRTF_sofa.sofa)
-  and [record](https://publications.rwth-aachen.de/record/807373).
-- Dataset: 48 kHz, 64,441 unique directions from 64,800 1-degree grid rows,
-  384 taps, 1 metre, two receivers.
-- License: [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/).
-- Source SHA-256: `52d89f1f4783ab2c33ede80773e82f9f245386f74d041b6ec78b0240bee063bd`.
-- Prepared CDF-1 intermediate SHA-256:
-  `3ee89a88aba270f124bb7d8b2d12095a1866700c0b58163062280633cd955256`.
-- Packaged `.ojhrtf` v2: 200,282,724 bytes; SHA-256
-  `2cc2f2d93194be681d4e446d66b4007060bc6c768cf7026c92e5efb87cf06dc3`.
-- OpenJOC modification: the source declares `RoomType=hemi-anechoic`; the
-  prepared CDF-1 metadata uses `free field` because that is the current loader's
-  accepted convention. The 359 duplicate +90-degree pole rows are collapsed;
-  all remaining directions and taps are kept. No EQ, resampling, phase change,
-  or subjective tuning is applied.
 
 Different listeners may prefer different non-individual HRTFs because
 perception depends on individual anatomy. OpenJOC provides several profiles;

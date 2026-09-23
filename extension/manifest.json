@@ -22,15 +22,12 @@
   "permissions": [
     "activeTab",
     "offscreen",
-    "storage",
-    "unlimitedStorage"
+    "storage"
   ],
   "host_permissions": [
     "https://bilivideo.com/*",
     "https://*.bilivideo.com/*",
-    "https://*.akamaized.net/*",
-    "https://github.com/*",
-    "https://release-assets.githubusercontent.com/*"
+    "https://*.akamaized.net/*"
   ],
   "content_scripts": [
     {

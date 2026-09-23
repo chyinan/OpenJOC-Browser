@@ -1,12 +1,13 @@
 // pattern: Imperative Shell
 
-import {DEFAULT_HRTF_PRESET, HRTF_ASSET_VERSION, type HrtfPreset, hrtfAssetMetadata} from '../src/hrtf-presets.js';
+import {DEFAULT_HRTF_PRESET, HRTF_ASSET_VERSION, HRTF_PRESET_OPTIONS, isHrtfPreset, normalizeHrtfPreset, type HrtfPreset, hrtfAssetMetadata} from '../src/hrtf-presets.js';
 import {DecoderGenerationSlot} from '../src/decoder-generation.js';
 import {
+  clearRetiredHrtfAssetCache,
   fetchHrtfAsset,
-  hrtfAssetCacheKey,
   validateHrtfManifest,
   type HrtfManifestAsset,
+  type HrtfAssetLoadOptions,
   type HrtfAssetLoadStage,
   type HrtfManifest,
 } from '../src/hrtf-assets.js';
@@ -27,38 +28,51 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 }
 
 class MemoryHrtfCache {
-  private readonly entries = new Map<string, Uint8Array>();
-  public putCount = 0;
+  private readonly entries = new Set<string>();
 
-  public async match(request: RequestInfo | URL): Promise<Response | undefined> {
-    const bytes = this.entries.get(requestUrl(request));
-    return bytes === undefined ? undefined : new Response(bytes.slice());
+  public add(key: string): void {
+    this.entries.add(key);
   }
 
-  public async put(request: RequestInfo | URL, response: Response): Promise<void> {
-    this.putCount += 1;
-    this.entries.set(requestUrl(request), new Uint8Array(await response.arrayBuffer()));
+  public has(key: string): boolean {
+    return this.entries.has(key);
+  }
+
+  public get size(): number {
+    return this.entries.size;
   }
 
   public async delete(request: RequestInfo | URL): Promise<boolean> {
-    return this.entries.delete(requestUrl(request));
+    const key = typeof request === 'string' ? request : request instanceof URL ? request.href : request.url;
+    return this.entries.delete(key);
   }
 }
 
-function requestUrl(request: RequestInfo | URL): string {
-  if (typeof request === 'string') return request;
-  return request instanceof URL ? request.href : request.url;
+type PackagedLoadOptions = Readonly<{
+  readonly asset: HrtfManifestAsset;
+  readonly fetcher: typeof fetch;
+  readonly onStage?: (stage: HrtfAssetLoadStage) => void;
+  readonly signal?: AbortSignal;
+}>;
+
+function packagedLoadOptions(options: PackagedLoadOptions): HrtfAssetLoadOptions {
+  return {
+    descriptor: options.asset,
+    wasmUrl: new URL('chrome-extension://test/wasm/openjoc_wasm.wasm'),
+    fetcher: options.fetcher,
+    signal: options.signal ?? new AbortController().signal,
+    onStage: options.onStage,
+  };
 }
 
-function descriptor(preset: HrtfPreset, bytes: Uint8Array, assetVersion = HRTF_ASSET_VERSION): HrtfManifestAsset {
+function descriptor(preset: HrtfPreset, byteLength: number, sha: string): HrtfManifestAsset {
   const metadata = hrtfAssetMetadata(preset);
   return {
     presetId: preset,
-    assetVersion,
+    assetVersion: HRTF_ASSET_VERSION,
     fileName: metadata.fileName,
-    byteLength: bytes.byteLength,
-    sha256: '',
-    url: `https://assets.example.test/hrtf/${assetVersion}/${metadata.fileName}`,
+    byteLength,
+    sha256: sha,
     dataset: 'test dataset',
     source: 'https://example.org/source',
     authorsInstitution: 'test institution',
@@ -71,246 +85,138 @@ function descriptor(preset: HrtfPreset, bytes: Uint8Array, assetVersion = HRTF_A
   };
 }
 
-async function withDigest(asset: HrtfManifestAsset, bytes: Uint8Array): Promise<HrtfManifestAsset> {
-  return {...asset, sha256: await sha256(bytes)};
+function manifestAsset(preset: HrtfPreset): HrtfManifestAsset {
+  const metadata = hrtfAssetMetadata(preset);
+  return {
+    presetId: preset,
+    assetVersion: HRTF_ASSET_VERSION,
+    fileName: metadata.fileName,
+    byteLength: metadata.byteLength,
+    sha256: metadata.sha256,
+    dataset: 'official dataset',
+    source: 'https://example.org/source',
+    authorsInstitution: 'OpenJOC upstream institution',
+    doi: null,
+    license: 'CC-BY-4.0',
+    sampleRateHz: 48_000,
+    directionCount: 1,
+    tapCount: 384,
+    notes: 'validated test metadata',
+  };
 }
 
-function dependencies(
-  asset: HrtfManifestAsset,
-  cache: Pick<Cache, 'match' | 'put' | 'delete'>,
-  bundled: boolean,
-  fetcher: typeof fetch,
-  onStage: (stage: HrtfAssetLoadStage) => void = (): void => {},
-  signal: AbortSignal = new AbortController().signal,
-) {
+function testManifest(): HrtfManifest {
   return {
-    descriptor: asset,
-    bundled,
-    wasmUrl: new URL('chrome-extension://test/wasm/openjoc_wasm.wasm'),
-    fetcher,
-    cache: cache as unknown as Pick<Cache, 'match' | 'put' | 'delete'>,
-    signal,
-    onStage,
+    schemaVersion: 1,
+    assetVersion: HRTF_ASSET_VERSION,
+    packageKind: 'standard',
+    bundledPresets: ['sadie-ii-d1-ku100', 'sadie-ii-d2-kemar'],
+    assets: {
+      'sadie-ii-d1-ku100': manifestAsset('sadie-ii-d1-ku100'),
+      'sadie-ii-d2-kemar': manifestAsset('sadie-ii-d2-kemar'),
+    },
   };
 }
 
 async function run(): Promise<void> {
   const payload = new Uint8Array([0x4f, 0x4a, 0x48, 0x52, 0x54, 0x46, 0x32]);
-  const cache = new MemoryHrtfCache();
+  const payloadSha = await sha256(payload);
   const stages: Array<HrtfAssetLoadStage> = [];
+  const packagedRequests: Array<string> = [];
 
   assert(DEFAULT_HRTF_PRESET === 'sadie-ii-d1-ku100', 'D1 remains the default offline preset');
+  assert(HRTF_PRESET_OPTIONS.map((option) => option.id).join(',') === 'sadie-ii-d1-ku100,sadie-ii-d2-kemar', 'only D1 and D2 remain built-in presets');
+  assert(!isHrtfPreset('aachen-high-resolution-kemar'), 'Aachen is no longer a selectable built-in preset');
+  assert(normalizeHrtfPreset('aachen-high-resolution-kemar') === DEFAULT_HRTF_PRESET, 'a saved Aachen selection migrates safely to default D1');
 
-  const included = await withDigest(descriptor(DEFAULT_HRTF_PRESET, payload), payload);
-  let networkRequests = 0;
   const packagedFetch: typeof fetch = async (input): Promise<Response> => {
-    networkRequests += 1;
-    assert(String(input).includes('/hrtf/'), 'bundled D1 is loaded from the extension package');
+    const url = new URL(String(input));
+    assert(url.protocol === 'chrome-extension:', 'built-in HRTF bytes are read only from the extension package');
+    packagedRequests.push(url.href);
     return new Response(payload.slice());
   };
-  const includedBytes = await fetchHrtfAsset(dependencies(included, cache, true, packagedFetch, (stage) => stages.push(stage)));
-  assert(equalBytes(includedBytes, payload), 'fresh offline installation can load the packaged D1 asset');
-  assert(networkRequests === 1, 'packaged D1 does not use a remote download');
-  assert(stages.includes('available'), 'packaged D1 reports available state');
-
-  const kemar = await withDigest(descriptor('sadie-ii-d2-kemar', payload), payload);
-  const offlineFetch: typeof fetch = async (): Promise<Response> => {
-    throw new Error('offline');
-  };
-  let offlineFailed = false;
-  try {
-    await fetchHrtfAsset(dependencies(kemar, cache, false, offlineFetch, (stage) => stages.push(stage)));
-  } catch {
-    offlineFailed = true;
+  const loadedByPreset = new Map<HrtfPreset, Uint8Array>();
+  for (const preset of HRTF_PRESET_OPTIONS.map((option) => option.id)) {
+    const asset = descriptor(preset, payload.byteLength, payloadSha);
+    const bytes = await fetchHrtfAsset(packagedLoadOptions({asset, fetcher: packagedFetch, onStage: (stage) => stages.push(stage)}));
+    loadedByPreset.set(preset, bytes);
+    assert(equalBytes(bytes, payload), `${preset} loads its packaged HRIR bytes`);
   }
-  assert(offlineFailed, 'uncached D2 is unavailable offline');
-  assert(stages.includes('download-required'), 'uncached D2 reports download required');
+  assert(packagedRequests.length === 2, 'one extension-local asset request is made for each built-in preset');
+  assert(stages.join(',') === 'verifying,preparing,verifying,preparing', 'packaged loads report verification and preparation only');
+  assert(stages.includes('verifying') && stages.includes('preparing'), 'packaged assets are verified before renderer preparation');
 
-  const retainedSlot = new DecoderGenerationSlot<Readonly<{id: string}>>(
+  const kemar = descriptor('sadie-ii-d2-kemar', payload.byteLength, '0'.repeat(64));
+  let badDigestRejected = false;
+  try {
+    await fetchHrtfAsset(packagedLoadOptions({asset: kemar, fetcher: packagedFetch}));
+  } catch {
+    badDigestRejected = true;
+  }
+  assert(badDigestRejected, 'a same-length packaged asset with the wrong SHA-256 is rejected');
+
+  const missingAsset = async (): Promise<Response> => new Response(null, {status: 404});
+  let missingAssetRejected = false;
+  try {
+    await fetchHrtfAsset(packagedLoadOptions({asset: descriptor('sadie-ii-d2-kemar', payload.byteLength, payloadSha), fetcher: missingAsset}));
+  } catch {
+    missingAssetRejected = true;
+  }
+  assert(missingAssetRejected, 'missing local D2 data fails without falling back to a remote download');
+
+  const d1Asset = descriptor('sadie-ii-d1-ku100', payload.byteLength, payloadSha);
+  const activeSlot = new DecoderGenerationSlot(
     async (_signal: AbortSignal, generation: number): Promise<Readonly<{id: string}>> => {
       if (generation === 1) return {id: 'active-d1'};
-      await fetchHrtfAsset(dependencies(kemar, cache, false, offlineFetch));
+      await fetchHrtfAsset(packagedLoadOptions({asset: descriptor('sadie-ii-d2-kemar', payload.byteLength, payloadSha), fetcher: missingAsset}));
       return {id: 'unreachable'};
     },
     (): void => {},
   );
-  const activeDecoder = await retainedSlot.start(1);
-  retainedSlot.finish(1);
-  try {
-    await retainedSlot.start(2);
-  } catch {
-    // The failed network replacement must leave D1 as the active decoder.
-  }
-  assert(retainedSlot.current() === activeDecoder, 'failed offline D2 fetch keeps the active D1 decoder instance');
+  const activeD1 = await activeSlot.start(1);
+  activeSlot.finish(1);
+  await activeSlot.start(2).catch((): void => {});
+  assert(activeSlot.current() === activeD1, 'failed packaged D2 loading leaves the active D1 decoder in place');
+  assert(loadedByPreset.has(d1Asset.presetId), 'D1 remains one of the directly packaged profiles');
 
-  const oversizedCache = new MemoryHrtfCache();
-  const oversizedBytes = new Uint8Array([...payload, 0xff]);
-  const oversizedResponse = new Response(new ReadableStream<Uint8Array>({
-    start(controller): void {
-      controller.enqueue(oversizedBytes);
-      controller.close();
-    },
-  }));
-  let oversizedRejected = false;
-  try {
-    await fetchHrtfAsset(dependencies(kemar, oversizedCache, false, async (): Promise<Response> => oversizedResponse.clone()));
-  } catch {
-    oversizedRejected = true;
-  }
-  assert(oversizedRejected, 'an oversized chunked download is rejected before it can be persisted');
-  assert(oversizedCache.putCount === 0, 'unverified network bytes never enter the persistent cache');
-
-  const badDigestCache = new MemoryHrtfCache();
-  const badDigest = {...kemar, sha256: '0'.repeat(64)};
-  let badDigestRejected = false;
-  try {
-    await fetchHrtfAsset(dependencies(badDigest, badDigestCache, false, async (): Promise<Response> => new Response(payload.slice())));
-  } catch {
-    badDigestRejected = true;
-  }
-  assert(badDigestRejected, 'a same-length body with the wrong SHA-256 is rejected');
-  assert(badDigestCache.putCount === 0, 'SHA-mismatched data is not persisted');
-
-  await cache.put(hrtfAssetCacheKey(kemar), new Response(payload.slice()));
-  networkRequests = 0;
-  const cachedKemar = await fetchHrtfAsset(dependencies(kemar, cache, false, offlineFetch, (stage) => stages.push(stage)));
-  assert(equalBytes(cachedKemar, payload), 'a previously downloaded D2 works offline from persistent cache');
-  assert(networkRequests === 0, 'cached D2 does not refetch');
-  assert(stages.includes('cached'), 'cached D2 reports cached state');
-
-  const aachen = await withDigest(descriptor('aachen-high-resolution-kemar', payload), payload);
-  await cache.put(hrtfAssetCacheKey(aachen), new Response(payload.slice()));
-  const cachedAachen = await fetchHrtfAsset(dependencies(aachen, cache, false, offlineFetch));
-  assert(equalBytes(cachedAachen, payload), 'a previously downloaded Aachen asset works offline');
-
-  const corruptCache = new MemoryHrtfCache();
-  await corruptCache.put(hrtfAssetCacheKey(kemar), new Response(new Uint8Array([1, 2])));
-  const refreshed = await fetchHrtfAsset(dependencies(kemar, corruptCache, false, async (): Promise<Response> => new Response(payload.slice())));
-  assert(equalBytes(refreshed, payload), 'corrupt cache entry is discarded and refetched');
-
-  const delayedCache = new MemoryHrtfCache();
-  let unblockFirstMatch = (): void => {};
-  let announceFirstMatch = (): void => {};
-  const firstMatchStarted = new Promise<void>((resolveStarted) => {
-    announceFirstMatch = resolveStarted;
-  });
-  const firstMatchBarrier = new Promise<void>((resolveBarrier) => {
-    unblockFirstMatch = resolveBarrier;
-  });
-  let matchCallCount = 0;
-  let activeMatches = 0;
-  let peakActiveMatches = 0;
-  const serializedCache: Pick<Cache, 'match' | 'put' | 'delete'> = {
-    match: async (request): Promise<Response | undefined> => {
-      matchCallCount += 1;
-      activeMatches += 1;
-      peakActiveMatches = Math.max(peakActiveMatches, activeMatches);
-      try {
-        if (matchCallCount === 1) {
-          announceFirstMatch();
-          await firstMatchBarrier;
-        }
-        return await delayedCache.match(request);
-      } finally {
-        activeMatches -= 1;
-      }
-    },
-    put: async (request, response): Promise<void> => delayedCache.put(request, response),
-    delete: async (request): Promise<boolean> => delayedCache.delete(request),
-  };
-  let serializedNetworkRequests = 0;
-  const serializedFetcher: typeof fetch = async (): Promise<Response> => {
-    serializedNetworkRequests += 1;
-    return new Response(payload.slice());
-  };
-  const firstLockFetch = fetchHrtfAsset(dependencies(kemar, serializedCache, false, serializedFetcher));
-  await firstMatchStarted;
-  const abandonedController = new AbortController();
-  const abandonedFetch = fetchHrtfAsset(dependencies(
-    kemar,
-    serializedCache,
-    false,
-    serializedFetcher,
-    (): void => {},
-    abandonedController.signal,
-  ));
-  abandonedController.abort();
-  let abandoned = false;
-  await abandonedFetch.catch((): void => {
-    abandoned = true;
-  });
-  assert(abandoned, 'an aborted cache-lock waiter returns without entering the cache');
-  const newestLockFetch = fetchHrtfAsset(dependencies(kemar, serializedCache, false, serializedFetcher));
-  for (let turn = 0; turn < 8 && matchCallCount === 1; turn += 1) await Promise.resolve();
-  const overlappingMatches = peakActiveMatches;
-  unblockFirstMatch();
-  const serializedBytes = await Promise.all([firstLockFetch, newestLockFetch]);
-  assert(overlappingMatches === 1, 'an aborted waiter cannot remove the lock held by an earlier cache operation');
-  assert(serializedNetworkRequests === 1, 'the latest waiter reads the asset cached by the original operation');
-  assert(serializedBytes.every((bytes) => equalBytes(bytes, payload)), 'both ordered requests receive verified bytes');
-
-  const stale = await withDigest(descriptor('sadie-ii-d2-kemar', payload, 'older-asset'), payload);
-  assert(hrtfAssetCacheKey(stale) !== hrtfAssetCacheKey(kemar), 'cache identity includes asset version and checksum');
+  const retiredProfileCache = new MemoryHrtfCache();
+  const retiredAachenKey = 'https://openjoc-cache.invalid/openjoc-hrtf-v2.0.0/aachen-high-resolution-kemar/2cc2f2d93194be681d4e446d66b4007060bc6c768cf7026c92e5efb87cf06dc3';
+  const oldDownloadedD2Key = 'https://openjoc-cache.invalid/openjoc-hrtf-v2.0.0/sadie-ii-d2-kemar/b2f42ca2ce9ef2dfa7e3eff263543c4f306d0ac95bd684cf5ca344c88d6bd461';
+  const unrelatedCacheKey = 'https://openjoc-cache.invalid/openjoc-hrtf-v2.1.0/sadie-ii-d2-kemar/other';
+  retiredProfileCache.add(retiredAachenKey);
+  retiredProfileCache.add(oldDownloadedD2Key);
+  retiredProfileCache.add(unrelatedCacheKey);
+  assert(await clearRetiredHrtfAssetCache(retiredProfileCache) === 2, 'upgrade migration removes old Aachen and D2 downloads');
+  assert(!retiredProfileCache.has(retiredAachenKey), 'retired Aachen bytes are reclaimed from extension cache');
+  assert(!retiredProfileCache.has(oldDownloadedD2Key), 'bundled D2 no longer remains duplicated in extension cache');
+  assert(retiredProfileCache.has(unrelatedCacheKey), 'cache migration preserves unrelated asset versions');
 
   const manifest = testManifest();
-  assert(validateHrtfManifest(manifest).packageKind === 'standard', 'standard manifest validates with D1 bundled');
-  const badManifest = {...manifest, bundledPresets: ['sadie-ii-d2-kemar']};
-  let rejected = false;
-  try {
-    validateHrtfManifest(badManifest);
-  } catch {
-    rejected = true;
+  assert(validateHrtfManifest(manifest).packageKind === 'standard', 'standard manifest validates with both built-in profiles bundled');
+  for (const bundledPresets of [['sadie-ii-d1-ku100'], ['sadie-ii-d2-kemar']]) {
+    let rejected = false;
+    try {
+      validateHrtfManifest({...manifest, bundledPresets});
+    } catch {
+      rejected = true;
+    }
+    assert(rejected, 'manifest cannot make a selectable built-in profile download-only');
   }
-  assert(rejected, 'manifest cannot remove the offline D1 default or bundle an invalid preset set');
-
-  const redirectedBaseUrl = 'https://github.com/untrusted-owner/OpenJOC/releases/download/openjoc-hrtf-v2.0.0/';
-  const redirectedAssets = {
-    'sadie-ii-d1-ku100': {...manifest.assets['sadie-ii-d1-ku100'], url: new URL(manifest.assets['sadie-ii-d1-ku100'].fileName, redirectedBaseUrl).href},
-    'sadie-ii-d2-kemar': {...manifest.assets['sadie-ii-d2-kemar'], url: new URL(manifest.assets['sadie-ii-d2-kemar'].fileName, redirectedBaseUrl).href},
-    'aachen-high-resolution-kemar': {...manifest.assets['aachen-high-resolution-kemar'], url: new URL(manifest.assets['aachen-high-resolution-kemar'].fileName, redirectedBaseUrl).href},
+  const manifestWithExtraAsset = {
+    ...manifest,
+    assets: {...manifest.assets, 'unexpected-preset': manifest.assets['sadie-ii-d1-ku100']},
   };
-  let redirectedRepositoryRejected = false;
+  let extraAssetRejected = false;
   try {
-    validateHrtfManifest({...manifest, baseUrl: redirectedBaseUrl, assets: redirectedAssets});
+    validateHrtfManifest(manifestWithExtraAsset);
   } catch {
-    redirectedRepositoryRejected = true;
+    extraAssetRejected = true;
   }
-  assert(redirectedRepositoryRejected, 'the local asset manifest cannot redirect downloads to another GitHub repository');
-}
-
-function testManifest(): HrtfManifest {
-  const createAsset = (preset: HrtfPreset): HrtfManifestAsset => {
-    const metadata = hrtfAssetMetadata(preset);
-    return {
-      presetId: preset,
-      assetVersion: HRTF_ASSET_VERSION,
-      fileName: metadata.fileName,
-      byteLength: metadata.byteLength,
-      sha256: metadata.sha256,
-      url: `https://github.com/chyinan/OpenJOC/releases/download/openjoc-hrtf-v2.0.0/${metadata.fileName}`,
-      dataset: 'official dataset',
-      source: 'https://example.org/source',
-      authorsInstitution: 'OpenJOC upstream institution',
-      doi: null,
-      license: 'CC-BY-4.0',
-      sampleRateHz: 48_000,
-      directionCount: 1,
-      tapCount: 384,
-      notes: 'validated test metadata',
-    };
-  };
-  return {
-    schemaVersion: 1,
-    assetVersion: HRTF_ASSET_VERSION,
-    packageKind: 'standard',
-    baseUrl: 'https://github.com/chyinan/OpenJOC/releases/download/openjoc-hrtf-v2.0.0/',
-    bundledPresets: ['sadie-ii-d1-ku100'],
-    assets: {
-      'sadie-ii-d1-ku100': createAsset('sadie-ii-d1-ku100'),
-      'sadie-ii-d2-kemar': createAsset('sadie-ii-d2-kemar'),
-      'aachen-high-resolution-kemar': createAsset('aachen-high-resolution-kemar'),
-    },
-  };
+  assert(extraAssetRejected, 'manifest rejects asset keys that are absent from the preset registry');
+  assert(!Object.hasOwn(manifest, 'baseUrl'), 'built-in asset manifest has no remote distribution base URL');
+  for (const asset of Object.values(manifest.assets)) {
+    assert(!Object.hasOwn(asset, 'url'), 'built-in asset manifest contains no remote download URL');
+  }
 }
 
 await run();

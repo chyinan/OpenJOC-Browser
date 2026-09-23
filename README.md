@@ -16,13 +16,13 @@ The first public release targets Microsoft Edge and Google Chrome. The primary s
 - Bilibili standard VOD detection and bounded CMAF range loading.
 - Stereo (Speakers) output and Binaural (Headphones) output.
 - Fixed Binaural virtual layout: 7.1.4.
-- Built-in SADIE II D1 (KU100), SADIE II D2 (KEMAR), and Aachen High-Resolution KEMAR HRTFs for Binaural mode; D1 remains the default.
+- Built-in SADIE II D1 (KU100) and SADIE II D2 (KEMAR) HRTFs for Binaural mode; D1 remains the default.
 - The Bilibili `<video>` remains the video renderer and master clock.
 - Play, pause, seek, buffering, refresh, and single-page media changes are generation-aware.
 - Saved renderer, Dialnorm, always-enable, and custom output-gain preferences.
 - Diagnostics for JOC profile, sync drift, buffers, underruns, decode timing, and WASM memory.
 
-The Standard extension packages D1 for immediate offline use. D2 and Aachen stay visible in the HRTF selector and are downloaded only when selected, then integrity-checked and cached for offline reuse. A separate Full offline package bundles the same three `.ojhrtf` files.
+The extension package includes both D1 and D2. Either profile is available offline immediately after installation; the selected asset is checked against its packaged size and SHA-256 before use.
 
 ## How it works
 
@@ -42,7 +42,7 @@ The browser code handles page integration, media URL policy, ISO-BMFF transport 
 
 ## Install from a GitHub release
 
-When a GitHub release is available, download `OpenJOC-Browser-v0.1.0-chromium.zip` from its Assets and extract it. The extracted top-level directory is the loadable extension root.
+When a GitHub release is available, download `OpenJOC-Browser-v0.1.0-chromium-standard.zip` from its Assets and extract it. The extracted top-level directory is the loadable extension root.
 
 For Microsoft Edge:
 
@@ -89,7 +89,7 @@ This project does not claim parity with a platform Dolby renderer, identical nat
 
 The extension reads the current Bilibili page's media identity, playback manifest candidates, video clock, and player mute/volume state only to operate the current session. It does not send audio, diagnostics, or browsing history to an OpenJOC service. It has no analytics, telemetry, account login, or credential collection. Only playback preferences are stored locally in extension storage.
 
-Media requests go to Bilibili endpoints needed for the selected session. Signed query strings are not persisted in extension storage or included in diagnostics. D2/Aachen HRTF data are fetched from a versioned GitHub Release only after selection; the extension never loads remote JavaScript or WASM. The exact permissions and data flows are documented in [privacy](docs/privacy.md) and [security](SECURITY.md).
+Media requests go to Bilibili endpoints needed for the selected session. Signed query strings are not persisted in extension storage or included in diagnostics. Both built-in HRTFs ship with the extension; HRTF selection makes no network request. The extension never loads remote JavaScript or WASM. The exact permissions and data flows are documented in [privacy](docs/privacy.md) and [security](SECURITY.md).
 
 ## Build from source
 
@@ -105,9 +105,6 @@ npm test
 npm run build
 npm run package:release -- --version 0.1.0
 npm run validate:release -- --version 0.1.0
-npm run build:full
-npm run package:full -- --version 0.1.0
-npm run validate:release -- --version 0.1.0 --hrtf-package full
 ```
 
 The generated extension is written to `extension/`. The release ZIP is written to `release/`. See [development](docs/development.md) for the exact toolchain, parity gates, browser QA, and an explicit local-source override.
@@ -144,13 +141,13 @@ OpenJOC-Browser 通过 WebAssembly 和 Web Audio，将 OpenJOC 的 E-AC-3 JOC �
 - 检测标准 Bilibili 视频点播并进行有界 CMAF 范围加载；
 - 支持 Stereo（扬声器）和 Binaural（耳机）输出；
 - 双耳模式使用固定的 7.1.4 虚拟扬声器布局；
-- 双耳模式内置 SADIE II D1（KU100）、SADIE II D2（KEMAR）和 Aachen High-Resolution KEMAR HRTF，D1 仍为默认配置；
+- 双耳模式内置 SADIE II D1（KU100）和 SADIE II D2（KEMAR）HRTF，D1 仍为默认配置；
 - Bilibili 的 `<video>` 元素继续负责视频渲染和主时钟；
 - 播放、暂停、跳转、缓冲、刷新和单页媒体切换均按播放代际处理；
 - 保存渲染器、Dialnorm、始终启用和自定义输出增益偏好；
 - 提供 JOC 配置、同步漂移、缓冲区、欠载、解码耗时和 WASM 内存诊断信息。
 
-Standard 扩展随包提供 D1，因此首次安装后即使离线也可使用。D2 和 Aachen 仍显示在选择器中，仅在用户选择时按需下载、校验并缓存，之后可离线使用。另有 Full offline package，包含同一套三个 `.ojhrtf` 文件。
+扩展包同时包含 D1 和 D2。安装后两套配置都可立即离线使用；加载前会按包内声明的文件大小和 SHA-256 校验所选资源。
 
 ## 工作原理
 
@@ -170,7 +167,7 @@ Bilibili 页面
 
 ## 从 GitHub release 安装
 
-有可用的 GitHub release 时，请下载 `OpenJOC-Browser-v0.1.0-chromium-standard.zip`（标准包）或 `OpenJOC-Browser-v0.1.0-chromium-full.zip`（完整离线包）并解压。解压后的顶层目录就是可加载的扩展根目录。
+有可用的 GitHub release 时，请下载 `OpenJOC-Browser-v0.1.0-chromium-standard.zip` 并解压。解压后的顶层目录就是可加载的扩展根目录；其中已包含 D1 和 D2 两套内置 HRTF。
 
 在 Microsoft Edge 中：
 
@@ -233,9 +230,6 @@ npm test
 npm run build
 npm run package:release -- --version 0.1.0
 npm run validate:release -- --version 0.1.0
-npm run build:full
-npm run package:full -- --version 0.1.0
-npm run validate:release -- --version 0.1.0 --hrtf-package full
 ```
 
 生成的扩展写入 `extension/`，release ZIP 写入 `release/`。确切的工具链、平行性检查、浏览器 QA 和显式的本地源码覆盖方式，请参阅[开发指南](docs/development.md)。

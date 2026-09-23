@@ -5,13 +5,12 @@ import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync}
 import {basename, dirname, join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
-import {validatePinnedHrtfAssetBaseUrl} from './hrtf-release-gate.mjs';
+import {validateHrtfManifest} from '../extension/hrtf-assets.js';
 
 const browserRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageVersion = JSON.parse(readFileSync(join(browserRoot, 'package.json'), 'utf8')).version;
 const version = (argumentValue('--version') ?? packageVersion).replace(/^v/, '');
-const requestedHrtfPackage = argumentValue('--hrtf-package');
-const zipPath = resolve(browserRoot, argumentValue('--zip') ?? `release/OpenJOC-Browser-v${version}-chromium-${requestedHrtfPackage ?? 'standard'}.zip`);
+const zipPath = resolve(browserRoot, argumentValue('--zip') ?? `release/OpenJOC-Browser-v${version}-chromium-standard.zip`);
 const {HRTF_ASSET_VERSION, HRTF_PRESET_OPTIONS, hrtfAssetMetadata} = await import(new URL('../extension/hrtf-presets.js', import.meta.url));
 if (!existsSync(zipPath)) throw new Error(`release ZIP is missing: ${zipPath}`);
 
@@ -26,7 +25,7 @@ if (manifestBytes === undefined) throw new Error('release ZIP manifest is missin
 if (!entries.has(`${rootName}/LICENSE`) || !entries.has(`${rootName}/THIRD_PARTY_NOTICES.txt`)) throw new Error('release ZIP license or third-party notices are missing');
 const manifest = JSON.parse(manifestBytes.toString('utf8'));
 if (manifest.manifest_version !== 3 || manifest.version !== version) throw new Error('release ZIP manifest version or format is invalid');
-validateHrtfPackage(entries, rootName, requestedHrtfPackage, {HRTF_ASSET_VERSION, HRTF_PRESET_OPTIONS, hrtfAssetMetadata});
+validateHrtfPackage(entries, rootName, {HRTF_ASSET_VERSION, HRTF_PRESET_OPTIONS, hrtfAssetMetadata});
 
 const forbidden = /(?:\.map$|\.ts$|\.tsx$|node_modules|\.git(?:\/|$)|(?:^|\/)target(?:\/|$)|(?:^|\/)\.qa(?:\/|$)|(?:^|\/)artifacts?(?:\/|$)|(?:^|\/)\.env|\.pem$|\.key$|(?:^|\/)PROGRESS-)/i;
 for (const name of entries.keys()) {
@@ -75,14 +74,14 @@ function argumentValue(name) {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-function validateHrtfPackage(entries, rootName, requestedKind, registry) {
+function validateHrtfPackage(entries, rootName, registry) {
   const manifestPath = `${rootName}/wasm/hrtf/manifest.json`;
   const bytes = entries.get(manifestPath);
   if (bytes === undefined) throw new Error('built-in HRTF asset manifest is missing from the package');
-  const hrtfManifest = JSON.parse(bytes.toString('utf8'));
+  const hrtfManifest = validateHrtfManifest(JSON.parse(bytes.toString('utf8')));
   const packageKind = hrtfManifest.packageKind;
-  if ((packageKind !== 'standard' && packageKind !== 'full') || (requestedKind !== undefined && requestedKind !== packageKind)) {
-    throw new Error(`HRTF package mode mismatch: requested=${requestedKind}, found=${packageKind}`);
+  if (packageKind !== 'standard') {
+    throw new Error(`HRTF package mode must be standard, found ${packageKind}`);
   }
   if (hrtfManifest.schemaVersion !== 1 || hrtfManifest.assetVersion !== registry.HRTF_ASSET_VERSION) {
     throw new Error('built-in HRTF asset manifest version is invalid');
@@ -91,12 +90,10 @@ function validateHrtfPackage(entries, rootName, requestedKind, registry) {
     throw new Error('built-in HRTF asset manifest table is invalid');
   }
   const presetIds = registry.HRTF_PRESET_OPTIONS.map((preset) => preset.id).toSorted();
-  const expectedBundled = packageKind === 'full' ? presetIds : ['sadie-ii-d1-ku100'];
+  const expectedBundled = presetIds;
   if (JSON.stringify(hrtfManifest.bundledPresets.toSorted()) !== JSON.stringify(expectedBundled)) {
     throw new Error(`${packageKind} package has an invalid bundled HRTF preset set`);
   }
-  const baseUrl = validatePinnedHrtfAssetBaseUrl(hrtfManifest.baseUrl, registry.HRTF_ASSET_VERSION);
-
   const packagedHrtfFiles = [];
   for (const preset of registry.HRTF_PRESET_OPTIONS) {
     const metadata = registry.hrtfAssetMetadata(preset.id);
@@ -107,7 +104,6 @@ function validateHrtfPackage(entries, rootName, requestedKind, registry) {
       || asset.fileName !== metadata.fileName
       || asset.byteLength !== metadata.byteLength
       || asset.sha256 !== metadata.sha256
-      || asset.url !== new URL(metadata.fileName, baseUrl).href
       || typeof asset.dataset !== 'string'
       || typeof asset.source !== 'string'
       || typeof asset.license !== 'string'

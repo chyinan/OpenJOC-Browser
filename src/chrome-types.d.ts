@@ -16,6 +16,11 @@ type ChromeOffscreenContextQuery = Readonly<{
   readonly documentUrls: ReadonlyArray<string>;
 }>;
 
+type ChromeInstalledDetails = Readonly<{
+  readonly reason: 'install' | 'update' | 'chrome_update' | 'shared_module_update';
+  readonly previousVersion?: string;
+}>;
+
 declare const chrome: {
   readonly action: {
     readonly onClicked: {
@@ -26,6 +31,12 @@ declare const chrome: {
     readonly id: string;
     getURL(path: string): string;
     sendMessage(message: unknown): Promise<unknown>;
+    readonly onInstalled: {
+      addListener(listener: (details: ChromeInstalledDetails) => void): void;
+    };
+    readonly onStartup: {
+      addListener(listener: () => void): void;
+    };
     readonly onMessage: {
       addListener(listener: (message: unknown, sender: ChromeMessageSender, sendResponse: (response: unknown) => void) => boolean | void): void;
     };

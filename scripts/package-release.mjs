@@ -11,12 +11,8 @@ const packageManifest = JSON.parse(readFileSync(join(browserRoot, 'package.json'
 const extensionManifest = JSON.parse(readFileSync(join(extensionRoot, 'manifest.json'), 'utf8'));
 const version = argumentValue('--version') ?? packageManifest.version;
 const hrtfManifest = JSON.parse(readFileSync(join(extensionRoot, 'wasm', 'hrtf', 'manifest.json'), 'utf8'));
-const requestedHrtfPackage = argumentValue('--hrtf-package');
-const hrtfPackageKind = requestedHrtfPackage ?? hrtfManifest.packageKind;
-if ((hrtfPackageKind !== 'standard' && hrtfPackageKind !== 'full') || hrtfPackageKind !== hrtfManifest.packageKind) {
-  throw new Error(`HRTF package mode mismatch: requested=${hrtfPackageKind}, built=${hrtfManifest.packageKind}`);
-}
-const output = resolve(browserRoot, argumentValue('--output') ?? `release/OpenJOC-Browser-v${version}-chromium-${hrtfPackageKind}.zip`);
+if (hrtfManifest.packageKind !== 'standard') throw new Error('built-in HRTF manifest must use the standard package');
+const output = resolve(browserRoot, argumentValue('--output') ?? `release/OpenJOC-Browser-v${version}-chromium-standard.zip`);
 
 if (packageManifest.version !== version || extensionManifest.version !== version) {
   throw new Error(`release version mismatch: package=${packageManifest.version}, extension=${extensionManifest.version}, requested=${version}`);

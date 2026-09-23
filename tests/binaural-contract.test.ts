@@ -18,8 +18,9 @@ function run(): void {
   const binauralOption = OVERLAY_RENDERER_OPTIONS.find((option) => option.renderer === 'binaural-headphones');
   assert(binauralOption?.enabled === true, 'Binaural renderer is an explicit available option');
   assert(binauralOption?.label === 'Binaural (Headphones)', 'Binaural renderer uses the factual user-facing label');
-  assert(HRTF_PRESET_OPTIONS.length === 3, 'all built-in HRTF profiles are exposed');
+  assert(HRTF_PRESET_OPTIONS.length === 2, 'only D1 and D2 built-in HRTF profiles are exposed');
   assert(HRTF_PRESET_OPTIONS[0]?.id === 'sadie-ii-d1-ku100', 'D1 remains the browser HRTF default');
+  assert(HRTF_PRESET_OPTIONS[1]?.id === 'sadie-ii-d2-kemar', 'D2 remains the second built-in HRTF');
 
   const rendererState = advanceOverlayState(
     createOverlayState(),

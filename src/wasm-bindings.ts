@@ -2,7 +2,6 @@
 
 import {DEFAULT_HRTF_PRESET, type HrtfPreset} from './hrtf-presets.js';
 import {
-  HRTF_ASSET_CACHE_NAME,
   fetchHrtfAsset,
   loadHrtfManifest,
   type HrtfAssetLoadStage,
@@ -247,7 +246,7 @@ export class WasmDecoderClient {
     const mode = options.dialnormMode === 'unity' ? 1 : 0;
     const renderer = options.renderer === 'binaural' ? 1 : 0;
     const hrtf = options.hrtf ?? DEFAULT_HRTF_PRESET;
-    const hrtfCode = hrtf === 'sadie-ii-d2-kemar' ? 1 : hrtf === 'aachen-high-resolution-kemar' ? 2 : 0;
+    const hrtfCode = hrtf === 'sadie-ii-d2-kemar' ? 1 : 0;
     this.hrtfPreset = hrtf;
     const createWithHrtf = this.exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf;
     const createWithHrtfAsset = this.exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset;
@@ -523,16 +522,10 @@ export async function loadOpenJocWasm(
   if (renderer === 'binaural' && supportsExternalAssets) {
     const manifest = await loadHrtfManifest({wasmUrl: url, fetcher: workerFetch, signal});
     const descriptor = manifest.assets[hrtf];
-    const bundled = manifest.bundledPresets.includes(hrtf);
-    const cache = bundled || typeof globalThis.caches === 'undefined'
-      ? null
-      : await globalThis.caches.open(HRTF_ASSET_CACHE_NAME);
     hrtfAsset = await fetchHrtfAsset({
       descriptor,
-      bundled,
       wasmUrl: url,
       fetcher: workerFetch,
-      cache,
       signal,
       onStage: loadOptions.onHrtfLoadStage,
     });

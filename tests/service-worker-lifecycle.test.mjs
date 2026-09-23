@@ -6,15 +6,19 @@ import {createSourceRuntime, waitFor} from './helpers/extension-runtime.mjs';
 
 async function createBackground(options = {}) {
   const listeners = [];
+  const installedListeners = [];
+  const startupListeners = [];
   const sent = [];
   const replies = [];
   let documentExists = true;
-  const runtime = createSourceRuntime({chrome: {
+  const runtime = createSourceRuntime({caches: options.caches, console: options.console ?? console, chrome: {
     action: {onClicked: {addListener() {}}},
     runtime: {
       id: 'openjoc-test', getURL: path => `chrome-extension://openjoc-test/${path}`,
       getContexts: async () => options.getContexts ? options.getContexts(documentExists) : documentExists ? [{}] : [],
       onMessage: {addListener(listener) {listeners.push(listener);}},
+      onInstalled: {addListener(listener) {installedListeners.push(listener);}},
+      onStartup: {addListener(listener) {startupListeners.push(listener);}},
       async sendMessage(message) {sent.push(message);},
     },
     tabs: {async sendMessage(tabId, message) {replies.push(message);}},
@@ -30,6 +34,12 @@ async function createBackground(options = {}) {
     },
     dispatch(message, documentId, tabId = 1) {
       for (const listener of listeners) listener(message, {id: 'openjoc-test', tab: {id: tabId}, documentId});
+    },
+    install(reason) {
+      for (const listener of installedListeners) listener({reason});
+    },
+    startup() {
+      for (const listener of startupListeners) listener();
     },
   };
 }
@@ -59,6 +69,39 @@ function hrtfSwitchMetrics(hrtf) {
   };
 }
 
+test('extension update and browser startup retry obsolete HRTF cache cleanup', async () => {
+  const retiredAachenKey = 'https://openjoc-cache.invalid/openjoc-hrtf-v2.0.0/aachen-high-resolution-kemar/2cc2f2d93194be681d4e446d66b4007060bc6c768cf7026c92e5efb87cf06dc3';
+  const retiredD2Key = 'https://openjoc-cache.invalid/openjoc-hrtf-v2.0.0/sadie-ii-d2-kemar/b2f42ca2ce9ef2dfa7e3eff263543c4f306d0ac95bd684cf5ca344c88d6bd461';
+  const cacheEntries = new Set([retiredAachenKey, retiredD2Key]);
+  let cacheKeyReads = 0;
+  const cache = {
+    async delete(request) { return cacheEntries.delete(String(request)); },
+  };
+  const caches = {
+    async keys() {
+      cacheKeyReads += 1;
+      if (cacheKeyReads === 1) throw new Error('temporary Cache Storage failure');
+      return ['openjoc-hrtf-assets-v2'];
+    },
+    async open() { return cache; },
+  };
+  const warnings = [];
+  const testConsole = {...console, warn(...values) { warnings.push(values); }};
+  const background = await createBackground({caches, console: testConsole});
+  await new Promise(setImmediate);
+  assert.equal(cacheKeyReads, 1, 'worker activation attempts the migration');
+
+  background.install('update');
+  await waitFor(() => cacheEntries.size === 0, 'HRTF cache cleanup after extension update');
+  assert.equal(cacheKeyReads, 2, 'an update event retries a failed activation cleanup');
+  assert.equal(warnings.length, 1, 'a failed migration reports a warning instead of silently disappearing');
+
+  cacheEntries.add(retiredD2Key);
+  background.startup();
+  await waitFor(() => cacheEntries.size === 0, 'HRTF cache cleanup after browser startup');
+  assert.equal(cacheKeyReads, 3, 'browser startup runs the migration again');
+});
+
 test('a different document can start a different media item with a lower page generation', async () => {
   const background = await createBackground();
   background.activate('old-document');
@@ -79,21 +122,21 @@ test('an HRTF asset failure restores the previous binaural profile and playback 
   background.dispatch(original, 'document');
   await waitFor(() => background.sent.some(message => message.type === 'start' && message.requestId === 'hrtf-request'), 'initial D1 session');
 
-  const replacement = {...original, requestId: 'aachen-request', generation: 2, hrtf: 'aachen-high-resolution-kemar'};
+  const replacement = {...original, requestId: 'd2-request', generation: 2, hrtf: 'sadie-ii-d2-kemar'};
   background.dispatch(replacement, 'document');
-  await waitFor(() => background.sent.some(message => message.type === 'start' && message.requestId === 'aachen-request' && message.hrtf === replacement.hrtf), 'Aachen replacement session');
-  const failedStart = background.sent.findLast(message => message.type === 'start' && message.requestId === 'aachen-request');
+  await waitFor(() => background.sent.some(message => message.type === 'start' && message.requestId === 'd2-request' && message.hrtf === replacement.hrtf), 'D2 replacement session');
+  const failedStart = background.sent.findLast(message => message.type === 'start' && message.requestId === 'd2-request');
   assert.ok(failedStart);
 
   background.dispatch({
-    target: 'background', type: 'offscreen-status', requestId: 'aachen-request', tabId: 1,
+    target: 'background', type: 'offscreen-status', requestId: 'd2-request', tabId: 1,
     mediaKey: replacement.mediaKey, generation: failedStart.generation, phase: 'error',
-    reason: 'HRTF selection failed (aachen-high-resolution-kemar): failed to download the asset',
+    reason: 'HRTF selection failed (sadie-ii-d2-kemar): failed to load the packaged asset',
     inbandJocConfirmed: false, profile: null, metrics: hrtfSwitchMetrics('sadie-ii-d1-ku100'),
   }, 'document');
 
   await waitFor(() => background.sent.some(message => message.type === 'start'
-    && message.requestId === 'aachen-request'
+    && message.requestId === 'd2-request'
     && message.generation === failedStart.generation + 1
     && message.hrtf === 'sadie-ii-d1-ku100'), 'previous D1 session restoration');
   assert.ok(background.replies.some(message => message.type === 'offscreen-status'

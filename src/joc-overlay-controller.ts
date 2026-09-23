@@ -438,12 +438,9 @@ function renderExpanded(state: OverlayState, status: OverlayStatus | null, inclu
 
 function renderNormalBody(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean, t: OverlayTranslate): string {
   const rendererOptions = OVERLAY_RENDERER_OPTIONS.map((option) => `<option value="${option.renderer}"${option.renderer === state.renderer ? ' selected' : ''}${option.enabled ? '' : ' disabled'}>${escapeHtml(rendererLabel(option.renderer, t))}</option>`).join('');
-  const hrtfOptions = HRTF_PRESET_OPTIONS.map((option) => {
-    const availability = option.id === 'sadie-ii-d1-ku100' ? t('hrtfAvailable') : t('hrtfDownloadRequired');
-    return `<option value="${option.id}"${option.id === state.hrtf ? ' selected' : ''}>${escapeHtml(option.label)} · ${escapeHtml(availability)}</option>`;
-  }).join('');
+  const hrtfOptions = HRTF_PRESET_OPTIONS.map((option) => `<option value="${option.id}"${option.id === state.hrtf ? ' selected' : ''}>${escapeHtml(option.label)}</option>`).join('');
   const hrtfControl = state.renderer === 'binaural-headphones'
-    ? `<div class="field-block"><label class="field-label" for="openjoc-hrtf">HRTF</label><select id="openjoc-hrtf" class="select" data-field="hrtf" aria-label="HRTF">${hrtfOptions}</select><p class="field-help">${escapeHtml(t('hrtfOfflineHelp'))}</p></div>`
+    ? `<div class="field-block hrtf-field-block"><label class="field-label" for="openjoc-hrtf">HRTF</label><select id="openjoc-hrtf" class="select" data-field="hrtf" aria-label="HRTF">${hrtfOptions}</select></div>`
     : '';
   const metrics = status?.metrics ?? null;
   const raw = includeRaw ? `<div class="raw-panel"><div class="raw-heading"><strong>${escapeHtml(t('rawDiagnosticsJson'))}</strong><button class="text-button" type="button" data-action="copy-json">${escapeHtml(t('copyJson'))}</button></div><pre class="raw-json">${escapeHtml(diagnosticsJson(state, status))}</pre></div>` : `<button class="secondary-trigger" type="button" data-action="open-raw" aria-expanded="false"><span>${escapeHtml(t('rawDiagnosticsJson'))}</span><span class="trigger-chevron">›</span></button>`;
@@ -571,10 +568,6 @@ function playbackStatusLabel(status: OverlayStatus | null, t: OverlayTranslate):
   if (status?.reason?.startsWith('hrtf-load-error-rollback:') === true) return t('hrtfFallback');
   if (status?.phase === 'preparing') {
     switch (status.reason) {
-      case 'hrtf-load-state:available': return t('hrtfAvailable');
-      case 'hrtf-load-state:download-required': return t('hrtfDownloadRequired');
-      case 'hrtf-load-state:downloading': return t('hrtfDownloading');
-      case 'hrtf-load-state:cached': return t('hrtfCached');
       case 'hrtf-load-state:verifying': return t('hrtfVerifying');
       case 'hrtf-load-state:preparing': return t('hrtfPreparing');
       default: return t('statusPreparing');
@@ -711,6 +704,8 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
 .select:hover { border-color: #86868b; }
 .select option:disabled { color: #86868b; }
 .field-block { padding: 14px 16px; border-top: 1px solid #e8e8ed; }
+/* Cancel the parent inset so the dependent HRTF field aligns with the renderer control. */
+.format-block > .hrtf-field-block { margin-left: -16px; margin-right: -16px; }
 .field-help { margin: 7px 0 0; color: #6e6e73; font-size: 12px; line-height: 1.35; }
 .health-block { padding: 5px 16px 8px; border-top: 1px solid #e8e8ed; }
 .metric-row { min-height: 34px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; color: #6e6e73; font-size: 14px; }

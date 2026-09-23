@@ -6,7 +6,7 @@ Users need a current desktop installation of Microsoft Edge or Google Chrome. Th
 
 ## Install from the release ZIP
 
-1. Download `OpenJOC-Browser-v0.1.0-chromium-standard.zip` for the smaller D1-included package, or `OpenJOC-Browser-v0.1.0-chromium-full.zip` for full offline use.
+1. Download `OpenJOC-Browser-v0.1.0-chromium-standard.zip`. It includes both D1 and D2, so either built-in HRTF works offline after installation.
 2. Extract it. Open the extracted `OpenJOC-Browser-v0.1.0/` directory.
 3. Open `edge://extensions` in Edge or `chrome://extensions` in Chrome.
 4. Enable **Developer mode**.
@@ -27,7 +27,7 @@ Open the browser extension page, find **OpenJOC Browser**, and choose **Remove**
 
 - `activeTab`: lets the toolbar action address the currently active page after a user click.
 - `offscreen`: creates the hidden audio document needed for Web Audio playback outside the page lifecycle.
-- `storage`: stores the four playback preferences locally.
+- `storage`: stores playback preferences locally.
 - `https://bilivideo.com/*`, `https://*.bilivideo.com/*`, and `https://*.akamaized.net/*`: permit bounded range requests for the exact Bilibili media URL selected by the current page session. Runtime validation narrows Akamai usage to `upos-*.akamaized.net`.
 
 The content scripts run only on `https://www.bilibili.com/video/*`. No generic all-sites host permission is requested.

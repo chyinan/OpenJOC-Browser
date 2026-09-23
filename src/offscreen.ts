@@ -23,7 +23,7 @@ const HRTF_PREPARATION_TIMEOUT_MS = 5 * 60_000;
 const DECODER_PROGRESS_TIMEOUT_MS = 10_000;
 
 type SessionStage = 'starting-audio' | 'starting-decoder' | 'fetching-index' | 'fetching-page-context-index' | 'fetching-segment' | 'decoding' | 'waiting-for-joc-profile' | 'streaming'
-  | 'hrtf-available' | 'hrtf-download-required' | 'hrtf-downloading' | 'hrtf-cached' | 'hrtf-verifying' | 'hrtf-preparing';
+  | 'hrtf-verifying' | 'hrtf-preparing';
 
 type WorkletStats = Readonly<{
   readonly queuedAudioMs: number;

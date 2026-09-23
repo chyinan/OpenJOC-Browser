@@ -35,7 +35,7 @@ npm run parity -- fixtures/joc.lifecycle.ec3 --binaural
 npm run cmaf-parity -- --binaural
 ```
 
-`npm run build` produces the Standard package: the WASM renderer, generated built-in manifest, and D1 only. D2 and Aachen remain selectable, but are downloaded from the pinned HTTPS GitHub Release URL when selected, after which the canonical `.ojhrtf` is verified and cached in extension Cache Storage. `npm run build:full` produces a Full offline package with the same three `.ojhrtf` assets and SHA-256 values. The build validates all source asset hashes in either mode and removes stale assets from the other package mode. The asset URL is fixed to the OpenJOC HRTF release path; the manifest loader rejects a different GitHub owner or repository.
+`npm run build` creates the single Standard package. It copies both `.ojhrtf` files from the selected OpenJOC source tree, checks their byte lengths and SHA-256 values against the registries, and records both as bundled. The manifest validator rejects any package that marks a supported preset as download-only. HRTF selection therefore works offline and does not contact an asset host.
 
 `npm run parity` requires bit-identical native-vs-WASM PCM; `npm run cmaf-parity` requires bit-identical raw-vs-CMAF PCM.
 
@@ -44,15 +44,10 @@ npm run cmaf-parity -- --binaural
 ```powershell
 npm run build
 npm run package:release -- --version 0.1.0
-npm run validate:release -- --version 0.1.0 --hrtf-package standard
-npm run build:full
-npm run package:full -- --version 0.1.0
-npm run validate:release -- --version 0.1.0 --hrtf-package full
+npm run validate:release -- --version 0.1.0
 ```
 
-The package scripts create `OpenJOC-Browser-v0.1.0-chromium-standard.zip` and `OpenJOC-Browser-v0.1.0-chromium-full.zip`, each with a directly loadable top-level directory, `LICENSE`, and `THIRD_PARTY_NOTICES.txt`. Each writes a sibling `.sha256` file. The validator checks package mode, bundled asset list, all declared byte lengths and SHA-256 values, manifest references, WASM/notices, and the ZIP checksum.
-
-Before publishing a Browser release, upload `sadie-ii-d2-kemar.ojhrtf` and `aachen-high-resolution-kemar.ojhrtf` from the verified OpenJOC source assets to the immutable `openjoc-hrtf-v2.0.0` GitHub Release. The remote asset release is separate from the Browser ZIP release. The release workflow runs `npm run check:hrtf-assets-remote`, which streams both remote files and blocks packaging if either response, byte length, or SHA-256 differs from the local registry.
+The package script creates `OpenJOC-Browser-v0.1.0-chromium-standard.zip` with a directly loadable top-level directory, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, the WASM renderer, and both HRTF assets. It writes a sibling `.sha256` file. The validator checks that every supported preset is bundled, verifies both byte lengths and SHA-256 values, checks manifest references and notices, and verifies the ZIP checksum.
 
 ## Local browser QA
 

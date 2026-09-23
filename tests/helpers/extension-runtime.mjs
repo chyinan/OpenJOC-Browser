@@ -9,10 +9,22 @@ const sourceRoot = new URL('../../src/', import.meta.url);
 
 /** Execute real extension modules; replace only browser/network boundaries in tests. */
 export function createSourceRuntime(globals = {}, replacements = {}) {
+  const chromeRuntime = globals.chrome?.runtime;
+  const runtimeGlobals = chromeRuntime === undefined ? globals : {
+    ...globals,
+    chrome: {
+      ...globals.chrome,
+      runtime: {
+        ...chromeRuntime,
+        onInstalled: chromeRuntime.onInstalled ?? {addListener() {}},
+        onStartup: chromeRuntime.onStartup ?? {addListener() {}},
+      },
+    },
+  };
   const context = createContext({
     console, URL, Response, Headers, AbortController, WebAssembly,
     ArrayBuffer, Uint8Array, Float32Array, TextDecoder, performance, crypto, atob, btoa,
-    ...globals,
+    ...runtimeGlobals,
   });
   const modules = new Map();
 

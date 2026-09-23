@@ -11,7 +11,7 @@ const assetManifest = JSON.parse(readFileSync(join(assetsRoot, 'manifest.json'),
 const fixture = readFileSync('fixtures/joc.lifecycle.ec3');
 const requestedPresets = process.argv.slice(2).filter((value) => !value.startsWith('--'));
 const presets = requestedPresets.length === 0
-  ? ['sadie-ii-d1-ku100', 'sadie-ii-d2-kemar', 'aachen-high-resolution-kemar']
+  ? ['sadie-ii-d1-ku100', 'sadie-ii-d2-kemar']
   : requestedPresets;
 const switchCycle = process.argv.includes('--switch-cycle');
 const runOrder = switchCycle ? [...presets, ...presets, presets[0]] : presets;
@@ -23,7 +23,7 @@ let peakOverlappingWasmLinearBytes = 0;
 
 for (const [runIndex, preset] of runOrder.entries()) {
   if (assetManifest.assetVersion !== HRTF_ASSET_VERSION || !assetManifest.bundledPresets.includes(preset)) {
-    throw new Error(`benchmark requires a package containing ${preset} at ${HRTF_ASSET_VERSION}; run npm run build:full first`);
+    throw new Error(`benchmark requires a package containing ${preset} at ${HRTF_ASSET_VERSION}; run npm run build first`);
   }
   const assetStarted = performance.now();
   let asset = readFileSync(join(assetsRoot, `${preset}.ojhrtf`));

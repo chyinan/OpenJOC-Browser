@@ -28,10 +28,10 @@ The page-context fallback receives only an exact manifest-discovered media URL a
 - `rendererMode`
 - `outputGainDb`
 
-The extension does not store browsing history, visited URLs, media files, signed media URLs, cookies, credentials, account identifiers, or user audio. It stores selected playback preferences and, after the user chooses D2 or Aachen, the corresponding public `.ojhrtf` data asset in extension Cache Storage for offline reuse. Assets are checked against the locally packaged byte length and SHA-256 before the renderer receives them.
+The extension does not store browsing history, visited URLs, media files, signed media URLs, cookies, credentials, account identifiers, or user audio. Both built-in `.ojhrtf` assets are packaged with the extension and are not downloaded or copied to Cache Storage. The selected asset is checked against its packaged byte length and SHA-256 before the renderer receives it.
 
 ## Permissions and hosts
 
-The `activeTab` permission supports a user-initiated toolbar toggle. `offscreen` supports the isolated Web Audio document. `storage` supports local playback preferences. `unlimitedStorage` allows the extension to retain the approximately 200 MB Aachen data asset without normal storage quota eviction. The Bilibili content scripts match standard VOD pages; `bilivideo.com` and Akamai host permissions allow bounded range requests to the selected media host, with runtime validation rejecting unrelated hosts. GitHub and `release-assets.githubusercontent.com` permissions are used only for the versioned HRTF data release; no JavaScript or WASM is fetched remotely. D1 ships in the extension and requires no network access.
+The `activeTab` permission supports a user-initiated toolbar toggle. `offscreen` supports the isolated Web Audio document. `storage` stores local playback preferences. The Bilibili content scripts match standard VOD pages; `bilivideo.com` and Akamai host permissions allow bounded range requests to the selected media host, with runtime validation rejecting unrelated hosts. The extension has no GitHub or HRTF asset-host permission: both built-in HRTFs ship in the package, and no JavaScript or WASM is fetched remotely.
 
 See [SECURITY.md](../SECURITY.md) for reporting and [the manifest review](release.md#manifest-review) for the current permission audit.

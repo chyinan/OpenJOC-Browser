@@ -69,6 +69,11 @@ test('the content-script bundle wires the compiled modules into one classic scri
     const controllerEnd = bundle.indexOf('\n\n(() => {', controllerStart);
     const controllerIife = bundle.slice(controllerStart, controllerEnd);
     assert.match(controllerIife, /const \{[^}]*normalizeOverlayLanguage[^}]*\} = __openjocOverlayI18n;/u, 'the controller bundle receives the language normalizer it calls during select changes');
+    assert.doesNotMatch(controllerIife, /escapeHtml\(availability\)/u, 'HRTF option labels do not append availability text');
+    assert.doesNotMatch(controllerIife, /hrtfAvailable/u, 'the HRTF selector has no offline availability text');
+    assert.doesNotMatch(controllerIife, /hrtfOfflineHelp/u, 'the HRTF selector does not render an extra helper paragraph');
+    assert.ok(bundle.includes('class="field-block hrtf-field-block"'), 'the nested HRTF selector has an explicit alignment scope');
+    assert.ok(bundle.includes('.format-block > .hrtf-field-block { margin-left: -16px; margin-right: -16px; }'), 'the HRTF field cancels the parent inset so its title and select align with output mode');
     assert.ok(!/\bimport\b|\bexport\b/u.test(bundle), 'the bundle keeps no module syntax for a classic content script');
     assert.ok(readFileSync(join(target, 'joc-overlay-i18n.js'), 'utf8').length > 0, 'the interface catalogues compile with the rest of the sources');
   } finally {

@@ -9,13 +9,18 @@ import {
 
 export const HRTF_ASSET_CACHE_NAME = 'openjoc-hrtf-assets-v2';
 const CACHE_KEY_ORIGIN = 'https://openjoc-cache.invalid/';
-const HRTF_ASSET_CACHE_LOCKS = new Map<string, Promise<void>>();
+const RETIRED_HRTF_ASSET_CACHE_KEYS: ReadonlyArray<string> = [
+  new URL(
+    'openjoc-hrtf-v2.0.0/aachen-high-resolution-kemar/2cc2f2d93194be681d4e446d66b4007060bc6c768cf7026c92e5efb87cf06dc3',
+    CACHE_KEY_ORIGIN,
+  ).href,
+  new URL(
+    'openjoc-hrtf-v2.0.0/sadie-ii-d2-kemar/b2f42ca2ce9ef2dfa7e3eff263543c4f306d0ac95bd684cf5ca344c88d6bd461',
+    CACHE_KEY_ORIGIN,
+  ).href,
+];
 
 export type HrtfAssetLoadStage =
-  | 'available'
-  | 'download-required'
-  | 'downloading'
-  | 'cached'
   | 'verifying'
   | 'preparing';
 
@@ -25,7 +30,6 @@ export type HrtfManifestAsset = Readonly<{
   readonly fileName: string;
   readonly byteLength: number;
   readonly sha256: string;
-  readonly url: string;
   readonly dataset: string;
   readonly source: string;
   readonly authorsInstitution: string;
@@ -40,18 +44,15 @@ export type HrtfManifestAsset = Readonly<{
 export type HrtfManifest = Readonly<{
   readonly schemaVersion: 1;
   readonly assetVersion: string;
-  readonly packageKind: 'standard' | 'full';
-  readonly baseUrl: string;
+  readonly packageKind: 'standard';
   readonly bundledPresets: ReadonlyArray<HrtfPreset>;
   readonly assets: Readonly<Record<HrtfPreset, HrtfManifestAsset>>;
 }>;
 
 export type HrtfAssetLoadOptions = Readonly<{
   readonly descriptor: HrtfManifestAsset;
-  readonly bundled: boolean;
   readonly wasmUrl: URL;
   readonly fetcher: typeof fetch;
-  readonly cache: Pick<Cache, 'match' | 'put' | 'delete'> | null;
   readonly signal: AbortSignal;
   readonly onStage?: (stage: HrtfAssetLoadStage) => void;
 }>;
@@ -67,14 +68,12 @@ export function validateHrtfManifest(value: unknown): HrtfManifest {
   if (!isRecord(value)
     || value.schemaVersion !== 1
     || value.assetVersion !== HRTF_ASSET_VERSION
-    || (value.packageKind !== 'standard' && value.packageKind !== 'full')
-    || typeof value.baseUrl !== 'string'
+    || value.packageKind !== 'standard'
     || !isRecord(value.assets)
     || !Array.isArray(value.bundledPresets)) {
     throw new Error('invalid built-in HRTF manifest header');
   }
 
-  const baseUrl = parseHttpsBaseUrl(value.baseUrl);
   const knownPresets = HRTF_PRESET_OPTIONS.map((option) => option.id);
   const candidatePresets: ReadonlyArray<unknown> = value.bundledPresets;
   const bundledPresets: Array<HrtfPreset> = [];
@@ -83,28 +82,24 @@ export function validateHrtfManifest(value: unknown): HrtfManifest {
     bundledPresets.push(preset);
   }
   if (new Set(bundledPresets).size !== bundledPresets.length
-    || !bundledPresets.includes('sadie-ii-d1-ku100')
-    || (value.packageKind === 'standard' && bundledPresets.length !== 1)
-    || (value.packageKind === 'full' && bundledPresets.length !== knownPresets.length)) {
-    throw new Error('built-in HRTF manifest has an invalid bundled preset set');
+    || bundledPresets.length !== knownPresets.length
+    || !knownPresets.every((preset) => bundledPresets.includes(preset))) {
+    throw new Error('built-in HRTF manifest must bundle every supported preset');
   }
   if (Object.keys(value.assets).length !== knownPresets.length) {
     throw new Error('built-in HRTF manifest does not match the compiled preset count');
   }
 
-  const sadieD1 = parseManifestAsset(value.assets, 'sadie-ii-d1-ku100', baseUrl);
-  const sadieD2 = parseManifestAsset(value.assets, 'sadie-ii-d2-kemar', baseUrl);
-  const aachen = parseManifestAsset(value.assets, 'aachen-high-resolution-kemar', baseUrl);
+  const sadieD1 = parseManifestAsset(value.assets, 'sadie-ii-d1-ku100');
+  const sadieD2 = parseManifestAsset(value.assets, 'sadie-ii-d2-kemar');
   return {
     schemaVersion: 1,
     assetVersion: HRTF_ASSET_VERSION,
     packageKind: value.packageKind,
-    baseUrl: baseUrl.href,
     bundledPresets,
     assets: {
       'sadie-ii-d1-ku100': sadieD1,
       'sadie-ii-d2-kemar': sadieD2,
-      'aachen-high-resolution-kemar': aachen,
     },
   };
 }
@@ -118,150 +113,52 @@ export async function loadHrtfManifest(options: HrtfManifestLoadOptions): Promis
   return validateHrtfManifest(value);
 }
 
-/** Returns a synthetic cache request bound to preset, asset version, and SHA-256. */
-export function hrtfAssetCacheKey(asset: Pick<HrtfManifestAsset, 'presetId' | 'assetVersion' | 'sha256'>): string {
-  return new URL(`${asset.assetVersion}/${asset.presetId}/${asset.sha256}`, CACHE_KEY_ORIGIN).href;
-}
-
-/** Fetches or reads one canonical .ojhrtf data asset, validating it before use. */
-export function fetchHrtfAsset(options: HrtfAssetLoadOptions): Promise<Uint8Array> {
-  const key = hrtfAssetCacheKey(options.descriptor);
-  return withHrtfAssetCacheLock(key, options.signal, () => fetchHrtfAssetUnlocked(options, key));
-}
-
-async function fetchHrtfAssetUnlocked(
-  options: HrtfAssetLoadOptions,
-  cacheKey: string,
-): Promise<Uint8Array> {
-  const {descriptor, bundled, wasmUrl, fetcher, cache, signal, onStage} = options;
-  if (!bundled) {
-    if (cache === null) throw new Error('persistent browser cache is unavailable for this built-in HRTF');
-    const cached = await cache.match(cacheKey);
-    if (cached !== undefined) {
-      onStage?.('cached');
-      onStage?.('verifying');
-      const cachedBytes = await readAndVerifyHrtfAsset(cached, descriptor, signal);
-      if (cachedBytes !== null) {
-        onStage?.('preparing');
-        return cachedBytes;
-      }
-      await cache.delete(cacheKey);
-    }
-    onStage?.('download-required');
-    onStage?.('downloading');
-  } else {
-    onStage?.('available');
-  }
-
-  const assetUrl = bundled
-    ? new URL(`./hrtf/${descriptor.fileName}`, wasmUrl)
-    : new URL(descriptor.url);
+/** Loads one packaged .ojhrtf asset and verifies it before renderer initialization. */
+export async function fetchHrtfAsset(options: HrtfAssetLoadOptions): Promise<Uint8Array> {
+  const {descriptor, wasmUrl, fetcher, signal, onStage} = options;
+  const assetUrl = new URL(`./hrtf/${descriptor.fileName}`, wasmUrl);
   let response: Response;
   try {
     response = await fetcher(assetUrl, {signal});
   } catch (error: unknown) {
     if (signal.aborted) throw error;
-    throw new Error(`failed to download built-in HRTF ${descriptor.presetId}; check the network and retry, or use the Full offline package`, {cause: error});
+    throw new Error(`failed to load built-in HRTF ${descriptor.presetId}; reinstall the extension and retry`, {cause: error});
   }
   if (!response.ok) {
-    const hint = response.status === 404
-      ? 'the versioned HRTF asset release is missing'
-      : `HTTP ${response.status}`;
-    throw new Error(`failed to load built-in HRTF ${descriptor.presetId}: ${hint}; check the network and retry, or use the Full offline package`);
+    const hint = response.status === 404 ? 'the packaged asset is missing' : `HTTP ${response.status}`;
+    throw new Error(`failed to load built-in HRTF ${descriptor.presetId}: ${hint}; reinstall the extension and retry`);
   }
   onStage?.('verifying');
   const bytes = await readAndVerifyHrtfAsset(response, descriptor, signal);
   if (bytes === null) {
     throw new Error(`built-in HRTF ${descriptor.presetId} failed size or SHA-256 verification`);
   }
-  if (!bundled) {
-    if (cache === null) throw new Error('persistent browser cache is unavailable for this built-in HRTF');
-    if (signal.aborted) throw signal.reason ?? new DOMException('HRTF load canceled', 'AbortError');
-    try {
-      await cache.put(cacheKey, responseFromVerifiedBytes(bytes));
-    } catch (error: unknown) {
-      throw new Error('verified HRTF loaded but persistent browser cache write failed; check extension storage space', {cause: error});
-    }
-  }
   onStage?.('preparing');
   return bytes;
 }
 
-async function withHrtfAssetCacheLock<T>(
-  key: string,
-  signal: AbortSignal,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const previous = HRTF_ASSET_CACHE_LOCKS.get(key) ?? Promise.resolve();
-  let releaseCurrent = (): void => {};
-  const current = new Promise<void>((resolve) => {
-    releaseCurrent = resolve;
-  });
-  const queued = previous.then(() => current);
-  HRTF_ASSET_CACHE_LOCKS.set(key, queued);
-  let acquired = false;
-  try {
-    await waitForCacheLock(previous, signal);
-    acquired = true;
-    if (signal.aborted) throw abortReason(signal);
-    return await operation();
-  } finally {
-    if (acquired) {
-      releaseCurrent();
-      if (HRTF_ASSET_CACHE_LOCKS.get(key) === queued) HRTF_ASSET_CACHE_LOCKS.delete(key);
-    } else {
-      const releaseAfterPrevious = (): void => {
-        releaseCurrent();
-        if (HRTF_ASSET_CACHE_LOCKS.get(key) === queued) HRTF_ASSET_CACHE_LOCKS.delete(key);
-      };
-      void previous.then(releaseAfterPrevious, releaseAfterPrevious);
-    }
+/** Removes old downloaded assets that are now bundled, preserving unrelated cache entries. */
+export async function clearRetiredHrtfAssetCache(cache: Pick<Cache, 'delete'>): Promise<number> {
+  let removed = 0;
+  for (const request of RETIRED_HRTF_ASSET_CACHE_KEYS) {
+    if (await cache.delete(request)) removed += 1;
   }
-}
-
-function waitForCacheLock(previous: Promise<void>, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(abortReason(signal));
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = (): void => {
-      signal.removeEventListener('abort', onAbort);
-      reject(abortReason(signal));
-    };
-    signal.addEventListener('abort', onAbort, {once: true});
-    void previous.then(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, (error: unknown) => {
-      signal.removeEventListener('abort', onAbort);
-      reject(error);
-    });
-  });
-}
-
-function abortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException('HRTF load canceled', 'AbortError');
-}
-
-/** Removes downloaded HRTF responses from extension-origin Cache Storage. */
-export async function clearHrtfAssetCache(cacheStorage: Pick<CacheStorage, 'delete'> = globalThis.caches): Promise<boolean> {
-  return cacheStorage.delete(HRTF_ASSET_CACHE_NAME);
+  return removed;
 }
 
 function parseManifestAsset(
   assets: Record<string, unknown>,
   preset: HrtfPreset,
-  baseUrl: URL,
 ): HrtfManifestAsset {
   if (!Object.hasOwn(assets, preset)) throw new Error(`built-in HRTF manifest is missing ${preset}`);
   const value = assets[preset];
   if (!isRecord(value)) throw new Error(`invalid built-in HRTF manifest entry: ${preset}`);
   const expected = hrtfAssetMetadata(preset);
-  const expectedUrl = new URL(expected.fileName, baseUrl).href;
   if (value.presetId !== preset
     || value.assetVersion !== HRTF_ASSET_VERSION
     || value.fileName !== expected.fileName
     || value.byteLength !== expected.byteLength
     || value.sha256 !== expected.sha256
-    || value.url !== expectedUrl
     || typeof value.dataset !== 'string'
     || typeof value.source !== 'string'
     || typeof value.authorsInstitution !== 'string'
@@ -283,7 +180,6 @@ function parseManifestAsset(
     fileName: expected.fileName,
     byteLength: expected.byteLength,
     sha256: expected.sha256,
-    url: expectedUrl,
     dataset: value.dataset,
     source: value.source,
     authorsInstitution: value.authorsInstitution,
@@ -294,20 +190,6 @@ function parseManifestAsset(
     tapCount: value.tapCount,
     notes: value.notes,
   };
-}
-
-function parseHttpsBaseUrl(value: string): URL {
-  let baseUrl: URL;
-  try {
-    baseUrl = new URL(value);
-  } catch {
-    throw new Error('built-in HRTF asset base URL is invalid');
-  }
-  const expectedBaseUrl = `https://github.com/chyinan/OpenJOC/releases/download/${HRTF_ASSET_VERSION}/`;
-  if (baseUrl.href !== expectedBaseUrl) {
-    throw new Error('built-in HRTF asset base URL must match the pinned OpenJOC HTTPS release');
-  }
-  return baseUrl;
 }
 
 async function readAndVerifyHrtfAsset(
@@ -346,30 +228,11 @@ async function readAndVerifyHrtfAsset(
   if (offset !== descriptor.byteLength) return null;
   if (signal.aborted) throw signal.reason ?? new DOMException('HRTF load canceled', 'AbortError');
   // This buffer was allocated locally at the fixed manifest length; hashing
-  // it directly avoids an additional 200 MB copy for Aachen.
+  // it directly avoids an additional full asset copy in the worker.
   const digest = await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer);
   if (signal.aborted) throw signal.reason ?? new DOMException('HRTF load canceled', 'AbortError');
   const actualHash = Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
   return actualHash === descriptor.sha256 ? bytes : null;
-}
-
-function responseFromVerifiedBytes(bytes: Uint8Array): Response {
-  const chunkSize = 1024 * 1024;
-  let offset = 0;
-  const body = new ReadableStream<Uint8Array>({
-    pull(controller): void {
-      if (offset >= bytes.byteLength) {
-        controller.close();
-        return;
-      }
-      const end = Math.min(offset + chunkSize, bytes.byteLength);
-      controller.enqueue(bytes.subarray(offset, end));
-      offset = end;
-    },
-  });
-  return new Response(body, {
-    headers: {'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength)},
-  });
 }
 
 function isHrtfPreset(value: unknown): value is HrtfPreset {

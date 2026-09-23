@@ -3,6 +3,7 @@
 import {isLegacyOffscreenStatus, isRuntimeMessage, type BilibiliAudioCandidate, type MediaKey, type RendererMode, type RuntimeMessage} from './extension-protocol.js';
 import {isAllowedBilibiliMediaUrl} from './media-url-policy.js';
 import {DEFAULT_HRTF_PRESET, normalizeHrtfPreset, type HrtfPreset} from './hrtf-presets.js';
+import {clearRetiredHrtfAssetCache, HRTF_ASSET_CACHE_NAME} from './hrtf-assets.js';
 import {isContentSessionReset, isStaleContentGeneration, mediaSessionRestartRequired, nextManifestGeneration, type MediaSessionSnapshot} from './media-session-policy.js';
 
 type BilibiliSession = {
@@ -445,6 +446,27 @@ chrome.action.onClicked.addListener((tab: ChromeTab): void => {
 chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessageSender): void => {
   if (sender.id === chrome.runtime.id && isLegacyOffscreenStatus(rawMessage)) recoverLegacyOffscreen(rawMessage.tabId);
 });
+
+chrome.runtime.onInstalled.addListener((details: ChromeInstalledDetails): void => {
+  if (details.reason === 'install' || details.reason === 'update') requestRetiredHrtfCachePurge();
+});
+
+chrome.runtime.onStartup.addListener(requestRetiredHrtfCachePurge);
+requestRetiredHrtfCachePurge();
+
+function requestRetiredHrtfCachePurge(): void {
+  void purgeRetiredHrtfCacheEntries().catch((error: unknown) => {
+    console.warn('failed to remove obsolete HRTF cache; will retry on the next extension lifecycle event', error);
+  });
+}
+
+async function purgeRetiredHrtfCacheEntries(): Promise<void> {
+  if (typeof globalThis.caches === 'undefined') return;
+  const cacheNames = await globalThis.caches.keys();
+  if (!cacheNames.includes(HRTF_ASSET_CACHE_NAME)) return;
+  const cache = await globalThis.caches.open(HRTF_ASSET_CACHE_NAME);
+  await clearRetiredHrtfAssetCache(cache);
+}
 
 chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessageSender): void => {
   if (!isRuntimeMessage(rawMessage)) return;

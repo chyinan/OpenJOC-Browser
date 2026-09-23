@@ -80,12 +80,8 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          npm run check:hrtf-assets-remote
           npm run package:release -- --version $version
-          npm run validate:release -- --version $version --hrtf-package standard
-          npm run build:full
-          npm run package:full -- --version $version
-          npm run validate:release -- --version $version --hrtf-package full
+          npm run validate:release -- --version $version
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v3
@@ -95,5 +91,3 @@ jobs:
           files: |
             release/OpenJOC-Browser-${{ github.ref_name }}-chromium-standard.zip
             release/OpenJOC-Browser-${{ github.ref_name }}-chromium-standard.zip.sha256
-            release/OpenJOC-Browser-${{ github.ref_name }}-chromium-full.zip
-            release/OpenJOC-Browser-${{ github.ref_name }}-chromium-full.zip.sha256
