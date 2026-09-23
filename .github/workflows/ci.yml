@@ -17,6 +17,8 @@ concurrency:
 jobs:
   verify:
     runs-on: windows-latest
+    env:
+      OPENJOC_SOURCE_PIN: ${{ vars.OPENJOC_SOURCE_PIN || 'ff2d974485f2ddf2380735da137cb106a1fd9f23' }}
     steps:
       - name: Check out Browser source
         uses: actions/checkout@v7
