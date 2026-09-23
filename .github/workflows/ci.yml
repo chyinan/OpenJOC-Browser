@@ -65,11 +65,11 @@ jobs:
       - name: Run functional-core tests
         run: npm test
 
-      - name: Check the packaged content script bundle
-        run: npm run test:bundle
-
       - name: Build production extension
         run: npm run build
+
+      - name: Check the packaged content script bundle
+        run: npm run test:bundle
 
       - name: Run lifecycle integration tests
         run: npm run test:lifecycle
