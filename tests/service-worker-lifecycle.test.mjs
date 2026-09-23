@@ -44,6 +44,21 @@ function startMessage(generation, requestId, media = 'A') {
   };
 }
 
+function hrtfSwitchMetrics(hrtf) {
+  return {
+    stage: 'hrtf-load-error-rollback', renderer: 'binaural', virtualLayout: '7.1.4', hrtf,
+    binauralLatencyMs: null, binauralP95Ms: null, binauralMaxMs: null,
+    currentVideoMediaTime: 0, currentAudioMediaTime: null, driftMs: null, averageDb: null,
+    driftP50Ms: null, driftP95Ms: null, driftMaxMs: null, resyncCount: 0,
+    compressedBufferMs: 0, pcmBufferMs: 0, underrunCount: 0,
+    decodeMeanMs: 0, decodeP95Ms: 0, decodeMaxMs: 0, realtimeFactor: null,
+    peakWasmMemoryBytes: 0, mediaUrl: null, audioContextTime: null, audioPerformanceTime: null,
+    baseLatencyMs: null, outputLatencyMs: null, decodedAccessUnits: 0, outputFrames: 0,
+    outputSamples: 0, workletProcessGapMaxMs: 0, workletProcessGapOver20MsCount: 0,
+    workletPlayedQuantumCount: 0, workletSilentQuantumCount: 0, workletLastReadType: null,
+  };
+}
+
 test('a different document can start a different media item with a lower page generation', async () => {
   const background = await createBackground();
   background.activate('old-document');
@@ -55,6 +70,36 @@ test('a different document can start a different media item with a lower page ge
   background.dispatch(next, 'new-document');
   await new Promise(setImmediate);
   assert.ok(background.sent.some(m => m.type === 'start' && m.requestId === 'new-request'), 'new document must not be rejected as an old generation');
+});
+
+test('an HRTF asset failure restores the previous binaural profile and playback request', async () => {
+  const background = await createBackground();
+  background.activate('document');
+  const original = {...startMessage(1, 'hrtf-request'), renderer: 'binaural', hrtf: 'sadie-ii-d1-ku100'};
+  background.dispatch(original, 'document');
+  await waitFor(() => background.sent.some(message => message.type === 'start' && message.requestId === 'hrtf-request'), 'initial D1 session');
+
+  const replacement = {...original, requestId: 'aachen-request', generation: 2, hrtf: 'aachen-high-resolution-kemar'};
+  background.dispatch(replacement, 'document');
+  await waitFor(() => background.sent.some(message => message.type === 'start' && message.requestId === 'aachen-request' && message.hrtf === replacement.hrtf), 'Aachen replacement session');
+  const failedStart = background.sent.findLast(message => message.type === 'start' && message.requestId === 'aachen-request');
+  assert.ok(failedStart);
+
+  background.dispatch({
+    target: 'background', type: 'offscreen-status', requestId: 'aachen-request', tabId: 1,
+    mediaKey: replacement.mediaKey, generation: failedStart.generation, phase: 'error',
+    reason: 'HRTF selection failed (aachen-high-resolution-kemar): failed to download the asset',
+    inbandJocConfirmed: false, profile: null, metrics: hrtfSwitchMetrics('sadie-ii-d1-ku100'),
+  }, 'document');
+
+  await waitFor(() => background.sent.some(message => message.type === 'start'
+    && message.requestId === 'aachen-request'
+    && message.generation === failedStart.generation + 1
+    && message.hrtf === 'sadie-ii-d1-ku100'), 'previous D1 session restoration');
+  assert.ok(background.replies.some(message => message.type === 'offscreen-status'
+    && message.phase === 'preparing'
+    && message.reason.startsWith('hrtf-load-error-rollback:')
+    && message.metrics.hrtf === 'sadie-ii-d1-ku100'), 'the content UI is informed that D1 remains active');
 });
 
 test('a reclaimed audio document invalidates the old session and requests a fresh start', async () => {

@@ -50,6 +50,8 @@ function run(): void {
 
   state = apply(createOverlayState(), {type: 'set-renderer', renderer: 'binaural-headphones'});
   assert(state.renderer === 'binaural-headphones', 'available Binaural renderer can be explicitly selected');
+  state = apply(state, {type: 'set-hrtf', hrtf: 'sadie-ii-d2-kemar'});
+  assert(state.hrtf === 'sadie-ii-d2-kemar', 'built-in HRTF selection is retained in controller state');
   state = apply(state, {type: 'set-dialnorm', mode: 'unity'});
   assert(state.dialnorm === 'unity', 'dialnorm selection is retained in controller state');
   state = apply(state, {type: 'set-always-enabled', enabled: true});
@@ -60,6 +62,7 @@ function run(): void {
   const reset = resetOverlayState(state);
   assert(reset.mode === 'hidden', 'reset clears the display lifecycle');
   assert(reset.renderer === 'binaural-headphones', 'reset preserves the selected renderer');
+  assert(reset.hrtf === 'sadie-ii-d2-kemar', 'reset preserves the selected HRTF');
   assert(reset.dialnorm === 'unity', 'reset preserves the selected Dialnorm mode');
   assert(reset.alwaysEnabled, 'reset preserves the always-enable preference');
   assert(reset.language === 'en', 'reset preserves the selected interface language');

@@ -6,13 +6,14 @@ import {WasmDecoderClient} from '../extension/wasm-bindings.js';
 const loops = Number(process.argv[2] ?? 147);
 const fixture = readFileSync('fixtures/joc.lifecycle.ec3');
 const wasmBytes = readFileSync('extension/wasm/openjoc_wasm.wasm');
+const hrtfAsset = readFileSync('extension/wasm/hrtf/sadie-ii-d1-ku100.ojhrtf');
 
 if (!Number.isSafeInteger(loops) || loops < 1) throw new Error('loops must be a positive safe integer');
 
 const {instance} = await WebAssembly.instantiate(wasmBytes, {
   env: {openjoc_wasm_clock_now_ms: () => performance.now()},
 });
-const decoder = new WasmDecoderClient(instance, {renderer: 'binaural'});
+const decoder = new WasmDecoderClient(instance, {renderer: 'binaural', hrtfAsset: new Uint8Array(hrtfAsset)});
 let peakWasmBytes = 0;
 let peakJsHeapBytes = 0;
 let mediaSamples = 0;

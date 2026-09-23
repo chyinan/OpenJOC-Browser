@@ -168,7 +168,14 @@ export async function createPlaybackRuntime(options = {}) {
       };
       const runtime = createSourceRuntime({
         self: this.scope,
-        fetch: async () => new Response(wasm),
+        fetch: async (resource) => {
+          const requestedUrl = new URL(String(resource));
+          if (requestedUrl.pathname.includes('/hrtf/')) {
+            const fileName = requestedUrl.pathname.split('/').pop();
+            return new Response(readFileSync(new URL(`../../extension/wasm/hrtf/${fileName}`, import.meta.url)));
+          }
+          return new Response(wasm);
+        },
       });
       this.ready = runtime.load('decoder-worker.js');
     }

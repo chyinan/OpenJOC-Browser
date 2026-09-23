@@ -12,6 +12,8 @@ const result = spawnSync(cargo, [
   'check',
   '--manifest-path', join(openjocRoot, 'Cargo.toml'),
   '-p', 'openjoc-wasm',
+  '--no-default-features',
+  '--features', 'external-builtin-hrtf-assets',
   '--target', 'wasm32-unknown-unknown',
 ], {cwd: openjocRoot, stdio: 'inherit'});
 if (result.error !== undefined) {

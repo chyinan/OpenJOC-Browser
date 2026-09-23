@@ -8,6 +8,7 @@ const SAMPLE_BYTES = 4_096;
 const SAMPLE_DURATION = 1_536;
 const fixture = readFileSync('fixtures/joc.lifecycle.ec3');
 const wasmBytes = readFileSync('extension/wasm/openjoc_wasm.wasm');
+const hrtfAsset = readFileSync('extension/wasm/hrtf/sadie-ii-d1-ku100.ojhrtf');
 const renderer = process.argv.includes('--binaural') ? 'binaural' : 'stereo';
 const dialnorm = process.argv.includes('--unity') ? 'unity' : 'calibrated';
 
@@ -52,7 +53,11 @@ function makeFragment(sample, ptsSamples) {
 
 async function createDecoder() {
   const {instance} = await WebAssembly.instantiate(wasmBytes, {env: {openjoc_wasm_clock_now_ms: () => performance.now()}});
-  return new WasmDecoderClient(instance, {renderer, dialnormMode: dialnorm});
+  return new WasmDecoderClient(instance, {
+    renderer,
+    dialnormMode: dialnorm,
+    ...(renderer === 'binaural' ? {hrtfAsset: new Uint8Array(hrtfAsset)} : {}),
+  });
 }
 
 function collectPcm(decoder, output) {

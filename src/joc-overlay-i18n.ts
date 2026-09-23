@@ -41,6 +41,14 @@ export type OverlayMessageKey =
   | 'closeNotice'
   | 'statusEnabledDiagnostics'
   | 'statusPreparing'
+  | 'hrtfAvailable'
+  | 'hrtfDownloadRequired'
+  | 'hrtfDownloading'
+  | 'hrtfCached'
+  | 'hrtfVerifying'
+  | 'hrtfPreparing'
+  | 'hrtfFallback'
+  | 'hrtfOfflineHelp'
   | 'statusReady'
   | 'statusPaused'
   | 'statusBuffering'
@@ -142,6 +150,14 @@ const ZH_CN_MESSAGES: OverlayMessages = {
   closeNotice: '关闭提示',
   statusEnabledDiagnostics: '已启用 · 高级信息',
   statusPreparing: '准备中',
+  hrtfAvailable: '可离线使用',
+  hrtfDownloadRequired: '需要下载',
+  hrtfDownloading: '正在下载 HRTF…',
+  hrtfCached: '已缓存',
+  hrtfVerifying: '正在校验…',
+  hrtfPreparing: '正在准备双耳渲染器…',
+  hrtfFallback: 'HRTF 加载失败，已恢复之前的配置。',
+  hrtfOfflineHelp: 'D1 随扩展提供；D2 和 Aachen 首次选择时下载，之后可离线使用。',
   statusReady: '已启用 · 等待音频',
   statusPaused: '已启用 · 已暂停',
   statusBuffering: '已启用 · 缓冲中',
@@ -242,6 +258,14 @@ const EN_MESSAGES: OverlayMessages = {
   closeNotice: 'Close the notice',
   statusEnabledDiagnostics: 'Enabled · Advanced',
   statusPreparing: 'Preparing',
+  hrtfAvailable: 'Available offline',
+  hrtfDownloadRequired: 'Download required',
+  hrtfDownloading: 'Downloading HRTF…',
+  hrtfCached: 'Cached',
+  hrtfVerifying: 'Verifying…',
+  hrtfPreparing: 'Preparing binaural renderer…',
+  hrtfFallback: 'HRTF load failed; restored the previous profile.',
+  hrtfOfflineHelp: 'D1 is included. D2 and Aachen download on first use and are cached for offline playback.',
   statusReady: 'Enabled · Waiting for audio',
   statusPaused: 'Enabled · Paused',
   statusBuffering: 'Enabled · Buffering',
@@ -342,6 +366,14 @@ const JA_MESSAGES: OverlayMessages = {
   closeNotice: '通知を閉じる',
   statusEnabledDiagnostics: '有効 · 詳細',
   statusPreparing: '準備中',
+  hrtfAvailable: 'オフラインで利用可能',
+  hrtfDownloadRequired: 'ダウンロードが必要',
+  hrtfDownloading: 'HRTF をダウンロード中…',
+  hrtfCached: 'キャッシュ済み',
+  hrtfVerifying: '検証中…',
+  hrtfPreparing: 'バイノーラルレンダラーを準備中…',
+  hrtfFallback: 'HRTF を読み込めなかったため、以前のプロファイルに戻しました。',
+  hrtfOfflineHelp: 'D1 は拡張機能に同梱されています。D2 と Aachen は初回選択時にダウンロードされ、以後はオフラインで利用できます。',
   statusReady: '有効 · オーディオを待機中',
   statusPaused: '有効 · 一時停止',
   statusBuffering: '有効 · バッファリング中',

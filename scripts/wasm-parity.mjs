@@ -39,13 +39,29 @@ function decodeWasm() {
   const wasmPath = join(browserRoot, 'extension', 'wasm', 'openjoc_wasm.wasm');
   const input = readFileSync(fixture);
   const wasmBytes = readFileSync(wasmPath);
+  const hrtfAsset = renderer === 'binaural'
+    ? readFileSync(join(browserRoot, 'extension', 'wasm', 'hrtf', 'sadie-ii-d1-ku100.ojhrtf'))
+    : null;
   return WebAssembly.instantiate(wasmBytes, {
     env: {
       openjoc_wasm_clock_now_ms: () => performance.now(),
     },
   }).then(({instance}) => {
     const exports_ = instance.exports;
-    const decoder = exports_.openjoc_wasm_decoder_create_with_renderer(dialnorm === 'unity' ? 1 : 0, renderer === 'binaural' ? 1 : 0);
+    let decoder;
+    if (hrtfAsset !== null && exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset !== undefined) {
+      const pointer = exports_.openjoc_wasm_hrtf_asset_alloc(hrtfAsset.length);
+      if (pointer === 0) throw new Error('WASM HRTF allocation failed');
+      new Uint8Array(exports_.memory.buffer, pointer, hrtfAsset.length).set(hrtfAsset);
+      decoder = exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset(
+        dialnorm === 'unity' ? 1 : 0, 1, 0, pointer, hrtfAsset.length,
+      );
+      exports_.openjoc_wasm_dealloc(pointer, hrtfAsset.length);
+    } else {
+      const createWithHrtf = exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf ?? exports_.openjoc_wasm_decoder_create_with_renderer;
+      decoder = createWithHrtf(dialnorm === 'unity' ? 1 : 0, renderer === 'binaural' ? 1 : 0, 0);
+    }
+    if (decoder === 0) throw new Error('WASM decoder creation failed');
     const initialMemoryBytes = exports_.memory.buffer.byteLength;
     let peakMemoryBytes = initialMemoryBytes;
     const recordMemory = () => {

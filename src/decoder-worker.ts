@@ -6,13 +6,21 @@ import {DecoderGenerationSlot} from './decoder-generation.js';
 import {MAX_CMAF_DECODE_QUEUE_MS, shouldWaitForCmafAudioBudget} from './decode-backpressure.js';
 import {MAX_INPUT_FILE_BYTES, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
 import {type RendererMode} from './extension-protocol.js';
+import {DEFAULT_HRTF_PRESET, type HrtfPreset} from './hrtf-presets.js';
 
 const workerScope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 const CHUNK_BYTES = 64 * 1024;
 const MAX_DECODE_QUEUE_MS = 1_000;
 
 const decoderSlot = new DecoderGenerationSlot<WasmDecoderClient>(
-  async (): Promise<WasmDecoderClient> => loadOpenJocWasm(new URL('./wasm/openjoc_wasm.wasm', import.meta.url), {dialnormMode, renderer: rendererMode}),
+  async (signal: AbortSignal, loadingGeneration: number): Promise<WasmDecoderClient> => loadOpenJocWasm(
+    new URL('./wasm/openjoc_wasm.wasm', import.meta.url),
+    {dialnormMode, renderer: rendererMode, hrtf: hrtfPreset},
+    {
+      signal,
+      onHrtfLoadStage: (stage): void => postMessage({type: 'hrtf-load-state', generation: loadingGeneration, stage}),
+    },
+  ),
   (decoder): void => decoder.destroy(),
 );
 let isPaused = false;
@@ -24,6 +32,7 @@ let wakeResolver: (() => void) | null = null;
 let decoderMode: string | null = null;
 let dialnormMode: 'calibrated' | 'unity' = 'calibrated';
 let rendererMode: RendererMode = 'stereo';
+let hrtfPreset: HrtfPreset = DEFAULT_HRTF_PRESET;
 let cmafCommandTail: Promise<void> = Promise.resolve();
 
 function postMessage(message: WorkerMessage, transfer: Array<ArrayBuffer> = []): void {
@@ -170,7 +179,7 @@ async function decodeBytes(bytes: ArrayBuffer, currentGeneration: number): Promi
   }
 }
 
-async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, requestedRenderer: RendererMode): Promise<void> {
+async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, requestedRenderer: RendererMode, requestedHrtf: HrtfPreset): Promise<void> {
   if (bytes.byteLength > MAX_INPUT_FILE_BYTES) {
     throw new Error(`input file exceeds the ${MAX_INPUT_FILE_BYTES} byte Phase-0 limit`);
   }
@@ -182,6 +191,7 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, req
   try {
     dialnormMode = 'calibrated';
     rendererMode = requestedRenderer;
+    hrtfPreset = requestedHrtf;
     const loadedDecoder = await decoderSlot.start(currentGeneration);
     if (!isCurrentGeneration(currentGeneration, generation) || loadedDecoder === null) {
       return;
@@ -198,13 +208,14 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, req
   }
 }
 
-async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: 'calibrated' | 'unity', requestedRenderer: RendererMode): Promise<boolean> {
-  const requestedMode = `cmaf-${requestedRenderer}-${requestedDialnorm}`;
+async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: 'calibrated' | 'unity', requestedRenderer: RendererMode, requestedHrtf: HrtfPreset): Promise<boolean> {
+  const requestedMode = `cmaf-${requestedRenderer}-${requestedDialnorm}-${requestedHrtf}`;
   if (decoderMode === requestedMode && decoderSlot.current() !== null) {
     return isCurrentGeneration(currentGeneration, generation);
   }
   dialnormMode = requestedDialnorm;
   rendererMode = requestedRenderer;
+  hrtfPreset = requestedHrtf;
   const loadedDecoder = await decoderSlot.start(currentGeneration);
   if (!isCurrentGeneration(currentGeneration, generation) || loadedDecoder === null) {
     return false;
@@ -228,7 +239,7 @@ async function handleCmafSample(command: Extract<WorkerCommand, {type: 'decode-c
   if (command.generation < generation) return;
   generation = Math.max(generation, command.generation);
   const currentGeneration = command.generation;
-  if (!(await ensureCmafDecoder(currentGeneration, command.dialnorm, command.renderer))) return;
+  if (!(await ensureCmafDecoder(currentGeneration, command.dialnorm, command.renderer, command.hrtf ?? DEFAULT_HRTF_PRESET))) return;
   await waitForCmafPlaybackBudget();
   if (!isCurrentGeneration(currentGeneration, generation)) return;
   const status = requireDecoder().pushPacket(new Uint8Array(command.bytes), {
@@ -263,7 +274,7 @@ async function handleCmafEnd(command: Extract<WorkerCommand, {type: 'end-cmaf'}>
 async function handleCommand(command: WorkerCommand): Promise<void> {
   switch (command.type) {
       case 'decode':
-        await handleDecode(command.bytes, command.generation, command.renderer ?? 'stereo');
+        await handleDecode(command.bytes, command.generation, command.renderer ?? 'stereo', command.hrtf ?? DEFAULT_HRTF_PRESET);
         return;
       case 'decode-cmaf-sample':
         await handleCmafSample(command);
@@ -284,7 +295,7 @@ async function handleCommand(command: WorkerCommand): Promise<void> {
       if (command.generation < generation) return;
       generation = command.generation;
       decoderSlot.reset(command.generation, (decoder): void => decoder.reset());
-      decoderMode = null;
+      if (decoderSlot.current() === null) decoderMode = null;
       isPaused = false;
       queuedAudioMs = 0;
       acceptedSequence = 0;
@@ -306,8 +317,10 @@ function handleCommandError(command: WorkerCommand, error: unknown): void {
   if (!isCurrentGeneration(command.generation, generation)) {
       return;
   }
-  const message = error instanceof Error ? error.message : 'OpenJOC worker failed';
   const status = decoderSlot.current()?.status();
+  const errorMessage = error instanceof Error ? error.message : 'OpenJOC worker failed';
+  const hrtfLoadFailed = rendererMode === 'binaural' && status?.hrtf !== hrtfPreset;
+  const message = hrtfLoadFailed ? `HRTF selection failed (${hrtfPreset}): ${errorMessage}` : errorMessage;
   postMessage({
     type: 'error',
     generation,
@@ -320,6 +333,11 @@ function handleCommandError(command: WorkerCommand, error: unknown): void {
 workerScope.onmessage = (event: MessageEvent<WorkerCommand>): void => {
   const command = event.data;
   if (command.type === 'decode-cmaf-sample' || command.type === 'end-cmaf') {
+    if (command.type === 'decode-cmaf-sample' && command.generation > generation) {
+      generation = command.generation;
+      decoderSlot.cancelPendingLoad();
+      signalWake();
+    }
     cmafCommandTail = cmafCommandTail
       .then(() => handleCommand(command))
       .catch((error: unknown) => handleCommandError(command, error));

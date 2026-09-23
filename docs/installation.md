@@ -6,7 +6,7 @@ Users need a current desktop installation of Microsoft Edge or Google Chrome. Th
 
 ## Install from the release ZIP
 
-1. Download `OpenJOC-Browser-v0.1.0-chromium.zip` from the GitHub Release Assets.
+1. Download `OpenJOC-Browser-v0.1.0-chromium-standard.zip` for the smaller D1-included package, or `OpenJOC-Browser-v0.1.0-chromium-full.zip` for full offline use.
 2. Extract it. Open the extracted `OpenJOC-Browser-v0.1.0/` directory.
 3. Open `edge://extensions` in Edge or `chrome://extensions` in Chrome.
 4. Enable **Developer mode**.

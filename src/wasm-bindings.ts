@@ -1,11 +1,19 @@
 // pattern: Imperative Shell
 
+import {DEFAULT_HRTF_PRESET, type HrtfPreset} from './hrtf-presets.js';
+import {
+  HRTF_ASSET_CACHE_NAME,
+  fetchHrtfAsset,
+  loadHrtfManifest,
+  type HrtfAssetLoadStage,
+} from './hrtf-assets.js';
+
 export type WasmDecoderStatus = 0 | 1 | 2 | 3 | -1;
 
 export type WasmDecoderSnapshot = Readonly<{
   readonly renderer: 'stereo' | 'binaural';
   readonly virtualLayout: '7.1.4' | null;
-  readonly hrtf: 'Built-in SADIE II D1' | null;
+  readonly hrtf: HrtfPreset | null;
   readonly latencySamples: number;
   readonly sampleRate: number | null;
   readonly outputChannels: number;
@@ -46,6 +54,11 @@ type WasmPacketFunction = (handle: number, pointer: number, length: number, ptsS
 
 const NO_PTS_SAMPLES = -9_223_372_036_854_775_808n;
 
+function optionalFunction(exports_: WebAssembly.Exports, name: string): WasmNumberFunction | undefined {
+  const value = exports_[name];
+  return typeof value === 'function' ? value as WasmNumberFunction : undefined;
+}
+
 export type WasmPcmBlock = Readonly<{
   readonly samples: Float32Array;
   readonly ptsSamples: number | null;
@@ -60,6 +73,13 @@ export type WasmPacketOptions = Readonly<{
 export type WasmDecoderOptions = Readonly<{
   readonly dialnormMode?: 'calibrated' | 'unity';
   readonly renderer?: 'stereo' | 'binaural';
+  readonly hrtf?: HrtfPreset;
+  readonly hrtfAsset?: Uint8Array;
+}>;
+
+export type WasmAssetLoadOptions = Readonly<{
+  readonly signal?: AbortSignal;
+  readonly onHrtfLoadStage?: (stage: HrtfAssetLoadStage) => void;
 }>;
 
 type WasmExports = Readonly<{
@@ -69,6 +89,9 @@ type WasmExports = Readonly<{
   readonly openjoc_wasm_decoder_create: WasmNumberFunction;
   readonly openjoc_wasm_decoder_create_with_dialnorm: WasmNumberFunction;
   readonly openjoc_wasm_decoder_create_with_renderer: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_create_with_renderer_and_hrtf?: WasmNumberFunction;
+  readonly openjoc_wasm_hrtf_asset_alloc?: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset?: WasmNumberFunction;
   readonly openjoc_wasm_decoder_destroy: WasmNumberFunction;
   readonly openjoc_wasm_decoder_push_bytes: WasmNumberFunction;
   readonly openjoc_wasm_decoder_push_packet: WasmPacketFunction;
@@ -164,6 +187,9 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
     openjoc_wasm_decoder_create: requireFunction(raw, 'openjoc_wasm_decoder_create'),
     openjoc_wasm_decoder_create_with_dialnorm: requireFunction(raw, 'openjoc_wasm_decoder_create_with_dialnorm'),
     openjoc_wasm_decoder_create_with_renderer: requireFunction(raw, 'openjoc_wasm_decoder_create_with_renderer'),
+    openjoc_wasm_decoder_create_with_renderer_and_hrtf: optionalFunction(raw, 'openjoc_wasm_decoder_create_with_renderer_and_hrtf'),
+    openjoc_wasm_hrtf_asset_alloc: optionalFunction(raw, 'openjoc_wasm_hrtf_asset_alloc'),
+    openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset: optionalFunction(raw, 'openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset'),
     openjoc_wasm_decoder_destroy: requireFunction(raw, 'openjoc_wasm_decoder_destroy'),
     openjoc_wasm_decoder_push_bytes: requireFunction(raw, 'openjoc_wasm_decoder_push_bytes'),
     openjoc_wasm_decoder_push_packet: requirePacketFunction(raw, 'openjoc_wasm_decoder_push_packet'),
@@ -210,6 +236,7 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
 export class WasmDecoderClient {
   private readonly exports_: WasmExports;
   private readonly handle: number;
+  private readonly hrtfPreset: HrtfPreset;
   private readonly decoderText = new TextDecoder();
   private readonly initialMemoryBytes: number;
   private peakMemoryBytes: number;
@@ -219,7 +246,34 @@ export class WasmDecoderClient {
     this.exports_ = createExports(instance);
     const mode = options.dialnormMode === 'unity' ? 1 : 0;
     const renderer = options.renderer === 'binaural' ? 1 : 0;
-    this.handle = this.exports_.openjoc_wasm_decoder_create_with_renderer(mode, renderer);
+    const hrtf = options.hrtf ?? DEFAULT_HRTF_PRESET;
+    const hrtfCode = hrtf === 'sadie-ii-d2-kemar' ? 1 : hrtf === 'aachen-high-resolution-kemar' ? 2 : 0;
+    this.hrtfPreset = hrtf;
+    const createWithHrtf = this.exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf;
+    const createWithHrtfAsset = this.exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset;
+    if (renderer === 1 && createWithHrtfAsset !== undefined) {
+      const asset = options.hrtfAsset;
+      const allocate = this.exports_.openjoc_wasm_hrtf_asset_alloc;
+      if (asset === undefined || allocate === undefined) {
+        throw new Error('selected built-in HRTF asset is missing from the decoder request');
+      }
+      const pointer = allocate(asset.length);
+      if (pointer === 0) throw new Error('failed to allocate OpenJOC HRTF asset buffer');
+      try {
+        this.writeBytes(pointer, asset);
+        this.handle = createWithHrtfAsset(mode, renderer, hrtfCode, pointer, asset.length);
+      } finally {
+        this.exports_.openjoc_wasm_dealloc(pointer, asset.length);
+      }
+    } else if (options.hrtfAsset !== undefined) {
+      throw new Error('this OpenJOC WASM bridge does not support external HRTF assets');
+    } else if (createWithHrtf === undefined && hrtf !== DEFAULT_HRTF_PRESET) {
+      throw new Error('selected built-in HRTF requires an updated OpenJOC WASM bridge');
+    } else {
+      this.handle = createWithHrtf === undefined
+        ? this.exports_.openjoc_wasm_decoder_create_with_renderer(mode, renderer)
+        : createWithHrtf(mode, renderer, hrtfCode);
+    }
     if (this.handle === 0) {
       throw new Error('failed to create OpenJOC WASM decoder');
     }
@@ -317,7 +371,7 @@ export class WasmDecoderClient {
     return {
       renderer: renderer === 1 ? 'binaural' : 'stereo',
       virtualLayout: renderer === 1 ? '7.1.4' : null,
-      hrtf: renderer === 1 ? 'Built-in SADIE II D1' : null,
+      hrtf: renderer === 1 ? (this.hrtfPreset ?? DEFAULT_HRTF_PRESET) : null,
       latencySamples: this.exports_.openjoc_wasm_decoder_latency_samples(this.handle),
       sampleRate: this.optionalSampleRate(this.exports_.openjoc_wasm_decoder_sample_rate(this.handle)),
       outputChannels: this.exports_.openjoc_wasm_decoder_channel_count(this.handle),
@@ -439,8 +493,21 @@ export class WasmDecoderClient {
   }
 }
 
-export async function loadOpenJocWasm(url: URL, options: WasmDecoderOptions = {}): Promise<WasmDecoderClient> {
-  const response = await fetch(url);
+export function supportsExternalHrtfAssetAbi(instance: WebAssembly.Instance): boolean {
+  return typeof instance.exports.openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset === 'function';
+}
+
+export async function loadOpenJocWasm(
+  url: URL,
+  options: WasmDecoderOptions = {},
+  loadOptions: WasmAssetLoadOptions = {},
+): Promise<WasmDecoderClient> {
+  const renderer = options.renderer ?? 'stereo';
+  const hrtf = options.hrtf ?? DEFAULT_HRTF_PRESET;
+  const signal = loadOptions.signal ?? new AbortController().signal;
+  // Keep WorkerGlobalScope as the receiver when fetch is passed to the asset loader.
+  const workerFetch: typeof fetch = (input, init) => globalThis.fetch(input, init);
+  const response = await fetch(url, {signal});
   if (!response.ok) {
     throw new Error(`failed to load OpenJOC WASM: ${response.status}`);
   }
@@ -450,5 +517,25 @@ export async function loadOpenJocWasm(url: URL, options: WasmDecoderOptions = {}
       openjoc_wasm_clock_now_ms: (): number => performance.now(),
     },
   });
-  return new WasmDecoderClient(instantiated.instance, options);
+  // Embedded-resource WASM versions can keep using their own preset storage.
+  const supportsExternalAssets = supportsExternalHrtfAssetAbi(instantiated.instance);
+  let hrtfAsset: Uint8Array | undefined;
+  if (renderer === 'binaural' && supportsExternalAssets) {
+    const manifest = await loadHrtfManifest({wasmUrl: url, fetcher: workerFetch, signal});
+    const descriptor = manifest.assets[hrtf];
+    const bundled = manifest.bundledPresets.includes(hrtf);
+    const cache = bundled || typeof globalThis.caches === 'undefined'
+      ? null
+      : await globalThis.caches.open(HRTF_ASSET_CACHE_NAME);
+    hrtfAsset = await fetchHrtfAsset({
+      descriptor,
+      bundled,
+      wasmUrl: url,
+      fetcher: workerFetch,
+      cache,
+      signal,
+      onStage: loadOptions.onHrtfLoadStage,
+    });
+  }
+  return new WasmDecoderClient(instantiated.instance, {...options, hrtfAsset});
 }

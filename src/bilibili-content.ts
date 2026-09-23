@@ -5,6 +5,7 @@ import {isRuntimeMessage, type PlaybackMetrics, type PlaybackPhase, type Rendere
 import {normalizeOverlayLanguage, type OverlayLanguage} from './joc-overlay-i18n.js';
 import {type DialnormMode, type OverlayRenderer} from './joc-overlay-state.js';
 import {normalizeOutputGainDb} from './output-gain.js';
+import {DEFAULT_HRTF_PRESET, normalizeHrtfPreset, type HrtfPreset} from './hrtf-presets.js';
 import {acknowledgeStart, createStartHandshake, nextStartHandshakeAction, recordStartAttempt, shouldAcceptPlaybackStatus, shouldDispatchSessionRecovery, shouldExpirePlaybackStatus, shouldRestartAfterSeek, type StartHandshakeState} from './start-handshake.js';
 
 (function (): void {
@@ -29,6 +30,7 @@ const START_ACKNOWLEDGEMENT_TIMEOUT_MS = 35_000;
 const ALWAYS_ENABLED_STORAGE_KEY = 'alwaysEnableOpenJoc';
 const DIALNORM_STORAGE_KEY = 'dialnormMode';
 const RENDERER_STORAGE_KEY = 'rendererMode';
+const HRTF_STORAGE_KEY = 'hrtfPreset';
 const OUTPUT_GAIN_STORAGE_KEY = 'outputGainDb';
 const LANGUAGE_STORAGE_KEY = 'overlayLanguage';
 let video: HTMLVideoElement | null = null;
@@ -40,6 +42,7 @@ let isOpenJocRequested = false;
 let latestStatus: ContentStatus | null = null;
 let dialnormMode: DialnormMode = 'calibrated';
 let rendererMode: RendererMode = 'stereo';
+let hrtfPreset: HrtfPreset = DEFAULT_HRTF_PRESET;
 let outputGainDb = 0;
 let overlayLanguage: OverlayLanguage = normalizeOverlayLanguage(undefined);
 let alwaysEnableOpenJoc = false;
@@ -47,6 +50,7 @@ let alwaysEnableAutoStartPending = false;
 let alwaysEnabledPreferenceChanged = false;
 let dialnormPreferenceChanged = false;
 let rendererPreferenceChanged = false;
+let hrtfPreferenceChanged = false;
 let outputGainPreferenceChanged = false;
 let languagePreferenceChanged = false;
 let playbackPreferencesLoaded = false;
@@ -66,6 +70,7 @@ const overlay: JocOverlayController = createJocOverlayController({
   onEnable: (options): void => {
     dialnormMode = options.dialnorm;
     rendererMode = rendererModeFromOverlay(options.renderer);
+    hrtfPreset = options.hrtf;
     alwaysEnableAutoStartPending = false;
     enableOpenJoc();
   },
@@ -78,6 +83,12 @@ const overlay: JocOverlayController = createJocOverlayController({
     rendererPreferenceChanged = true;
     rendererMode = rendererModeFromOverlay(renderer);
     void chrome.storage.local.set({[RENDERER_STORAGE_KEY]: rendererMode}).catch(() => undefined);
+    if (isOpenJocRequested) enableOpenJoc();
+  },
+  onHrtfChange: (hrtf): void => {
+    hrtfPreferenceChanged = true;
+    hrtfPreset = hrtf;
+    void chrome.storage.local.set({[HRTF_STORAGE_KEY]: hrtf}).catch(() => undefined);
     if (isOpenJocRequested) enableOpenJoc();
   },
   onDialnormChange: (mode): void => {
@@ -244,7 +255,7 @@ function dispatchStartRequest(): boolean {
   activeStartRequestId = crypto.randomUUID();
   startHandshake = recordStartAttempt(startHandshake, performance.now());
   traceLifecycle('start-attempt', {attempt: startHandshake.attempts, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE))});
-  send({target: 'background', type: 'start', requestId: activeStartRequestId, pageUrl: location.href, mediaKey: manifest.mediaKey, candidates: manifest.candidates, generation: videoGeneration, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE)), paused: currentVideo.paused, buffering: currentVideo.readyState < 3, dialnorm: dialnormMode, renderer: rendererMode, gainDb: outputGainDb});
+  send({target: 'background', type: 'start', requestId: activeStartRequestId, pageUrl: location.href, mediaKey: manifest.mediaKey, candidates: manifest.candidates, generation: videoGeneration, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE)), paused: currentVideo.paused, buffering: currentVideo.readyState < 3, dialnorm: dialnormMode, renderer: rendererMode, hrtf: hrtfPreset, gainDb: outputGainDb});
   emitClock();
   return true;
 }
@@ -267,7 +278,7 @@ function maybeEnableAlways(): void {
 
 async function restorePlaybackPreferences(): Promise<void> {
   try {
-    const stored = await chrome.storage.local.get([ALWAYS_ENABLED_STORAGE_KEY, DIALNORM_STORAGE_KEY, RENDERER_STORAGE_KEY, OUTPUT_GAIN_STORAGE_KEY, LANGUAGE_STORAGE_KEY]);
+    const stored = await chrome.storage.local.get([ALWAYS_ENABLED_STORAGE_KEY, DIALNORM_STORAGE_KEY, RENDERER_STORAGE_KEY, HRTF_STORAGE_KEY, OUTPUT_GAIN_STORAGE_KEY, LANGUAGE_STORAGE_KEY]);
     if (!dialnormPreferenceChanged) {
       dialnormMode = stored[DIALNORM_STORAGE_KEY] === 'unity' ? 'unity' : 'calibrated';
       overlay.setDialnorm(dialnormMode);
@@ -275,6 +286,10 @@ async function restorePlaybackPreferences(): Promise<void> {
     if (!rendererPreferenceChanged) {
       rendererMode = stored[RENDERER_STORAGE_KEY] === 'binaural' ? 'binaural' : 'stereo';
       overlay.setRenderer(rendererMode === 'binaural' ? 'binaural-headphones' : 'stereo-speakers');
+    }
+    if (!hrtfPreferenceChanged) {
+      hrtfPreset = normalizeHrtfPreset(stored[HRTF_STORAGE_KEY]);
+      overlay.setHrtf?.(hrtfPreset);
     }
     if (!outputGainPreferenceChanged) {
       outputGainDb = normalizeOutputGainDb(stored[OUTPUT_GAIN_STORAGE_KEY]);
@@ -289,7 +304,7 @@ async function restorePlaybackPreferences(): Promise<void> {
       alwaysEnableAutoStartPending = alwaysEnableOpenJoc;
       overlay.setAlwaysEnabled(alwaysEnableOpenJoc);
     }
-    traceLifecycle('preference-restored', {alwaysEnabled: alwaysEnableOpenJoc, dialnorm: dialnormMode, renderer: rendererMode, gainDb: outputGainDb, language: overlayLanguage});
+    traceLifecycle('preference-restored', {alwaysEnabled: alwaysEnableOpenJoc, dialnorm: dialnormMode, renderer: rendererMode, hrtf: hrtfPreset, gainDb: outputGainDb, language: overlayLanguage});
   } catch {
     // Keep the in-memory default when storage is unavailable.
   } finally {
@@ -416,6 +431,16 @@ function applyStatus(status: ContentStatus): void {
   const firstAcknowledgement = !startHandshake.acknowledged;
   startHandshake = acknowledgeStart(startHandshake);
   latestStatus = status;
+  const hrtfSelectionRolledBack = status.reason?.startsWith('hrtf-load-error-rollback:') === true;
+  if ((hrtfSelectionRolledBack || (status.phase === 'error' && status.reason?.toLowerCase().includes('hrtf') === true))
+    && status.metrics.hrtf !== null
+    && status.metrics.hrtf !== hrtfPreset) {
+    hrtfPreset = status.metrics.hrtf;
+    hrtfPreferenceChanged = true;
+    overlay.setHrtf?.(hrtfPreset);
+    void chrome.storage.local.set({[HRTF_STORAGE_KEY]: hrtfPreset}).catch(() => undefined);
+    traceLifecycle('hrtf-selection-rolled-back', {activeHrtf: hrtfPreset});
+  }
   if (status.generation > videoGeneration) videoGeneration = status.generation;
   lastStatusAt = performance.now();
   if (firstAcknowledgement || previousPhase !== status.phase) traceLifecycle('status', {phase: status.phase, stage: status.metrics.stage, statusGeneration: status.generation});

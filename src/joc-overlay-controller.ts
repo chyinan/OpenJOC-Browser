@@ -4,6 +4,7 @@ import {type PlaybackMetrics, type PlaybackPhase} from './extension-protocol.js'
 import {OVERLAY_LANGUAGE_OPTIONS, isOverlayLanguage, normalizeOverlayLanguage, overlayMessage, type OverlayLanguage, type OverlayMessageKey} from './joc-overlay-i18n.js';
 import {advanceOverlayState, createOverlayState, needsOverlayMarkupRebuild, resetOverlayState, OVERLAY_RENDERER_OPTIONS, type DialnormMode, type OverlayRenderer, type OverlayState} from './joc-overlay-state.js';
 import {normalizeOutputGainDb, OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB, OUTPUT_GAIN_STEP_DB} from './output-gain.js';
+import {HRTF_PRESET_OPTIONS, hrtfPresetLabel, normalizeHrtfPreset, type HrtfPreset} from './hrtf-presets.js';
 
 type OverlayStatus = Readonly<{
   readonly phase: PlaybackPhase;
@@ -15,6 +16,7 @@ type OverlayStatus = Readonly<{
 
 type OverlayEnableOptions = Readonly<{
   readonly renderer: OverlayRenderer;
+  readonly hrtf: HrtfPreset;
   readonly dialnorm: DialnormMode;
 }>;
 
@@ -25,6 +27,7 @@ type JocOverlayCallbacks = Readonly<{
   readonly onEnable: (options: OverlayEnableOptions) => void;
   readonly onDisable: () => void;
   readonly onRendererChange: (renderer: OverlayRenderer) => void;
+  readonly onHrtfChange: (hrtf: HrtfPreset) => void;
   readonly onDialnormChange: (mode: DialnormMode) => void;
   readonly onAlwaysEnabledChange: (enabled: boolean) => void;
   readonly onGainChange: (gainDb: number) => void;
@@ -37,6 +40,7 @@ export type JocOverlayController = Readonly<{
   readonly setAlwaysEnabled: (enabled: boolean) => void;
   readonly setDialnorm: (mode: DialnormMode) => void;
   readonly setRenderer: (renderer: OverlayRenderer) => void;
+  readonly setHrtf: (hrtf: HrtfPreset) => void;
   readonly setGainDb: (gainDb: number) => void;
   readonly setLanguage: (language: OverlayLanguage) => void;
   readonly setDebugSummary: (summary: string) => void;
@@ -156,7 +160,7 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
     switch (action) {
       case 'enable':
         transition({type: 'enable'});
-        callbacks.onEnable({renderer: state.renderer, dialnorm: state.dialnorm});
+      callbacks.onEnable({renderer: state.renderer, hrtf: state.hrtf, dialnorm: state.dialnorm});
         return;
       case 'disable':
         transition({type: 'disable'});
@@ -226,6 +230,12 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
       const renderer = target.value === 'binaural-headphones' ? 'binaural-headphones' : 'stereo-speakers';
       transition({type: 'set-renderer', renderer});
       callbacks.onRendererChange(renderer);
+      return;
+    }
+    if (target.dataset.field === 'hrtf') {
+      const hrtf = normalizeHrtfPreset(target.value);
+      transition({type: 'set-hrtf', hrtf});
+      callbacks.onHrtfChange(hrtf);
       return;
     }
     if (target.dataset.field === 'language') {
@@ -323,6 +333,10 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
     setRenderer(renderer: OverlayRenderer): void {
       if (state.renderer === renderer) return;
       transition({type: 'set-renderer', renderer});
+    },
+    setHrtf(hrtf: HrtfPreset): void {
+      if (state.hrtf === hrtf) return;
+      transition({type: 'set-hrtf', hrtf});
     },
     setGainDb(gainDb: number): void {
       if (state.gainDb === gainDb) return;
@@ -424,9 +438,16 @@ function renderExpanded(state: OverlayState, status: OverlayStatus | null, inclu
 
 function renderNormalBody(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean, t: OverlayTranslate): string {
   const rendererOptions = OVERLAY_RENDERER_OPTIONS.map((option) => `<option value="${option.renderer}"${option.renderer === state.renderer ? ' selected' : ''}${option.enabled ? '' : ' disabled'}>${escapeHtml(rendererLabel(option.renderer, t))}</option>`).join('');
+  const hrtfOptions = HRTF_PRESET_OPTIONS.map((option) => {
+    const availability = option.id === 'sadie-ii-d1-ku100' ? t('hrtfAvailable') : t('hrtfDownloadRequired');
+    return `<option value="${option.id}"${option.id === state.hrtf ? ' selected' : ''}>${escapeHtml(option.label)} · ${escapeHtml(availability)}</option>`;
+  }).join('');
+  const hrtfControl = state.renderer === 'binaural-headphones'
+    ? `<div class="field-block"><label class="field-label" for="openjoc-hrtf">HRTF</label><select id="openjoc-hrtf" class="select" data-field="hrtf" aria-label="HRTF">${hrtfOptions}</select><p class="field-help">${escapeHtml(t('hrtfOfflineHelp'))}</p></div>`
+    : '';
   const metrics = status?.metrics ?? null;
   const raw = includeRaw ? `<div class="raw-panel"><div class="raw-heading"><strong>${escapeHtml(t('rawDiagnosticsJson'))}</strong><button class="text-button" type="button" data-action="copy-json">${escapeHtml(t('copyJson'))}</button></div><pre class="raw-json">${escapeHtml(diagnosticsJson(state, status))}</pre></div>` : `<button class="secondary-trigger" type="button" data-action="open-raw" aria-expanded="false"><span>${escapeHtml(t('rawDiagnosticsJson'))}</span><span class="trigger-chevron">›</span></button>`;
-  return `<div class="format-block"><p class="eyebrow">${escapeHtml(t('currentAudio'))}</p><h2 class="format-name">E-AC-3 JOC</h2><label class="field-label" for="openjoc-renderer">${escapeHtml(t('outputMode'))}</label><select id="openjoc-renderer" class="select" data-field="renderer" aria-label="${escapeHtml(t('outputMode'))}">${rendererOptions}</select></div>
+  return `<div class="format-block"><p class="eyebrow">${escapeHtml(t('currentAudio'))}</p><h2 class="format-name">E-AC-3 JOC</h2><label class="field-label" for="openjoc-renderer">${escapeHtml(t('outputMode'))}</label><select id="openjoc-renderer" class="select" data-field="renderer" aria-label="${escapeHtml(t('outputMode'))}">${rendererOptions}</select>${hrtfControl}</div>
     <div class="field-block"><label class="field-label" for="openjoc-dialnorm">${escapeHtml(t('dialnormField'))}</label><select id="openjoc-dialnorm" class="select" data-field="dialnorm" aria-describedby="openjoc-dialnorm-help"><option value="calibrated"${state.dialnorm === 'calibrated' ? ' selected' : ''}>${escapeHtml(t('dialnormCalibrated'))}</option><option value="unity"${state.dialnorm === 'unity' ? ' selected' : ''}>${escapeHtml(t('dialnormUnity'))}</option></select><p class="field-help" id="openjoc-dialnorm-help">${escapeHtml(state.dialnorm === 'unity' ? t('dialnormUnityHelp') : t('dialnormCalibratedHelp'))}</p></div>
     ${renderHealth(metrics, t)}
     ${includeDiagnostics ? renderDiagnostics(state, status, raw, t) : `<div class="actions-block"><button class="primary-button action-button" type="button" data-action="disable">${escapeHtml(t('disableOpenJoc'))}</button><button class="secondary-trigger" type="button" data-action="open-diagnostics" aria-expanded="false"><span>${escapeHtml(t('advancedEntry'))} <small>${escapeHtml(t('advancedEntryHint'))}</small></span><span class="trigger-chevron">›</span></button><span class="copy-status" data-copy-status aria-live="polite"></span></div>`}`;
@@ -455,7 +476,7 @@ function renderHealth(metrics: PlaybackMetrics | null, t: OverlayTranslate): str
 
 function renderDiagnostics(state: OverlayState, status: OverlayStatus | null, raw: string, t: OverlayTranslate): string {
   const metrics = status?.metrics ?? null;
-  binauralDiagnosticsMarkup = state.renderer === 'binaural-headphones' ? renderBinauralDiagnostics(metrics, t) : '';
+  binauralDiagnosticsMarkup = state.renderer === 'binaural-headphones' ? renderBinauralDiagnostics(state, metrics, t) : '';
   alwaysEnabledMarkup = renderAlwaysEnabledControl(state, t);
   return `<div class="diagnostics-section"><div class="diagnostics-heading"><h3>${escapeHtml(t('advancedDiagnostics'))}</h3><span>${escapeHtml(t('liveSnapshot'))}</span></div>
     ${renderLanguageControl(state, t)}
@@ -469,10 +490,10 @@ function renderDiagnostics(state: OverlayState, status: OverlayStatus | null, ra
     <div class="diagnostics-actions">${raw}<button class="secondary-trigger" type="button" data-action="close-diagnostics" aria-expanded="true"><span>${escapeHtml(t('collapseDiagnostics'))}</span><span class="trigger-chevron up">›</span></button><span class="copy-status" data-copy-status aria-live="polite"></span></div>`;
 }
 
-function renderBinauralDiagnostics(metrics: PlaybackMetrics | null, t: OverlayTranslate): string {
+function renderBinauralDiagnostics(state: OverlayState, metrics: PlaybackMetrics | null, t: OverlayTranslate): string {
   return renderDiagGroup('binaural', [
     {label: t('diagVirtualLayout'), value: metrics?.virtualLayout ?? t('defaultVirtualLayout'), liveKey: null},
-    {label: t('diagHrtf'), value: metrics?.hrtf === null || metrics === null ? 'Built-in SADIE II D1 (Default)' : `${metrics.hrtf} (Default)`, liveKey: null},
+    {label: t('diagHrtf'), value: metrics?.hrtf === null || metrics === null ? hrtfPresetLabel(state.hrtf) : hrtfPresetLabel(metrics.hrtf), liveKey: null},
     {label: t('diagBinauralLatency'), value: metrics?.binauralLatencyMs === null || metrics === null ? '—' : `${formatNumber(metrics.binauralLatencyMs, 2)} ms`, liveKey: 'diag-binaural-latency'},
     {label: t('diagBinauralP95'), value: metrics?.binauralP95Ms === null || metrics === null ? '—' : `${formatNumber(metrics.binauralP95Ms, 2)} ms`, liveKey: 'diag-binaural-p95'},
   ], t);
@@ -547,8 +568,19 @@ function renderNonJoc(t: OverlayTranslate): string {
 }
 
 function playbackStatusLabel(status: OverlayStatus | null, t: OverlayTranslate): string {
+  if (status?.reason?.startsWith('hrtf-load-error-rollback:') === true) return t('hrtfFallback');
+  if (status?.phase === 'preparing') {
+    switch (status.reason) {
+      case 'hrtf-load-state:available': return t('hrtfAvailable');
+      case 'hrtf-load-state:download-required': return t('hrtfDownloadRequired');
+      case 'hrtf-load-state:downloading': return t('hrtfDownloading');
+      case 'hrtf-load-state:cached': return t('hrtfCached');
+      case 'hrtf-load-state:verifying': return t('hrtfVerifying');
+      case 'hrtf-load-state:preparing': return t('hrtfPreparing');
+      default: return t('statusPreparing');
+    }
+  }
   switch (status?.phase) {
-    case 'preparing': return t('statusPreparing');
     case 'ready': return t('statusReady');
     case 'paused': return t('statusPaused');
     case 'buffering': return t('statusBuffering');

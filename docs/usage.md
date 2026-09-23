@@ -13,14 +13,16 @@ The HTML video remains the master clock. Normal play, pause, buffering, seek, re
 Under **输出方式**, the current options are:
 
 - **Stereo (Speakers)**: the fixed two-channel speaker path.
-- **Binaural (Headphones)**: virtual-speaker rendering through the built-in SADIE II D1 HRTF, producing two-channel headphone output.
+- **Binaural (Headphones)**: fixed virtual-speaker rendering through one of three built-in generic profiles, producing two-channel headphone output.
 
 Under **节目电平**, the current options are:
 
 - **Calibrated**: respects programme Dialnorm according to OpenJOC semantics.
 - **Unity / 兼容模式**: disables Dialnorm attenuation. This is not a volume boost.
 
-Binaural uses a fixed virtual 7.1.4 layout and the built-in SADIE II D1 (KU100) HRTF. The release does not expose custom SOFA files, head tracking, or virtual 9.1.6.
+Binaural uses a fixed virtual 7.1.4 layout. The selector offers **SADIE II — KU100** (Default / Reference), **SADIE II — KEMAR**, and **Aachen — High-Resolution KEMAR**. Different listeners may prefer different non-individual HRTFs because perception depends strongly on individual anatomy; no profile is best for everyone.
+
+The Standard package includes D1 and works offline after installation. D2 and Aachen are fetched only after selection, with downloading, verification, and renderer-preparation states shown in the panel. A verified asset is kept in extension storage and can be used offline on later runs. Choose the Full offline package to include all three profiles without first-use downloads. This Browser extension does not expose Custom SOFA import, head tracking, or virtual 9.1.6.
 
 ## Custom output gain
 

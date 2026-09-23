@@ -28,10 +28,10 @@ The page-context fallback receives only an exact manifest-discovered media URL a
 - `rendererMode`
 - `outputGainDb`
 
-The extension does not store browsing history, visited URLs, media files, signed URLs, cookies, credentials, account identifiers, or user audio.
+The extension does not store browsing history, visited URLs, media files, signed media URLs, cookies, credentials, account identifiers, or user audio. It stores selected playback preferences and, after the user chooses D2 or Aachen, the corresponding public `.ojhrtf` data asset in extension Cache Storage for offline reuse. Assets are checked against the locally packaged byte length and SHA-256 before the renderer receives them.
 
 ## Permissions and hosts
 
-The `activeTab` permission supports a user-initiated toolbar toggle. `offscreen` supports the isolated Web Audio document. `storage` supports the four preferences above. The Bilibili content scripts match standard VOD pages, and the `bilivideo.com` plus Akamai host permissions allow the offscreen document to issue bounded range requests to the exact selected media host; runtime validation rejects unrelated Akamai URLs.
+The `activeTab` permission supports a user-initiated toolbar toggle. `offscreen` supports the isolated Web Audio document. `storage` supports local playback preferences. `unlimitedStorage` allows the extension to retain the approximately 200 MB Aachen data asset without normal storage quota eviction. The Bilibili content scripts match standard VOD pages; `bilivideo.com` and Akamai host permissions allow bounded range requests to the selected media host, with runtime validation rejecting unrelated hosts. GitHub and `release-assets.githubusercontent.com` permissions are used only for the versioned HRTF data release; no JavaScript or WASM is fetched remotely. D1 ships in the extension and requires no network access.
 
 See [SECURITY.md](../SECURITY.md) for reporting and [the manifest review](release.md#manifest-review) for the current permission audit.

@@ -62,7 +62,7 @@ test('the content-script bundle wires the compiled modules into one classic scri
     compileSources(target);
     const bundle = createContentBundle(target);
 
-    for (const iife of ['__openjocOutputGain', '__openjocOverlayI18n', '__openjocOverlayState', '__openjocStartHandshake', '__openjocExtensionProtocol', '__openjocOverlayController']) {
+    for (const iife of ['__openjocOutputGain', '__openjocOverlayI18n', '__openjocHrtfPresets', '__openjocOverlayState', '__openjocStartHandshake', '__openjocExtensionProtocol', '__openjocOverlayController']) {
       assert.ok(bundle.includes(`const ${iife} = (() => {`), `${iife} is defined by the bundle`);
     }
     const controllerStart = bundle.indexOf('const __openjocOverlayController = (() => {');

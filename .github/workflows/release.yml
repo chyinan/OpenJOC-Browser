@@ -15,6 +15,8 @@ concurrency:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      OPENJOC_SOURCE_PIN: ${{ vars.OPENJOC_SOURCE_PIN }}
     steps:
       - name: Check out tagged Browser source
         uses: actions/checkout@v7
@@ -38,6 +40,9 @@ jobs:
       - name: Validate tag and source policy
         shell: pwsh
         run: |
+          if (-not $env:OPENJOC_SOURCE_PIN) {
+            throw 'Set the repository variable OPENJOC_SOURCE_PIN to a compatible OpenJOC commit before publishing a Browser release.'
+          }
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           npm run check:version -- $version
           npm run check:release-policy
@@ -53,7 +58,12 @@ jobs:
           npm test
 
       - name: Build WASM and extension from source
-        run: npm run build
+        run: |
+          npm run build
+          $info = Get-Content extension/wasm/openjoc-build-info.json | ConvertFrom-Json
+          if ($info.sourceDirty -ne $false -or $info.sourceCommit -ne $env:OPENJOC_SOURCE_PIN) {
+            throw 'Release WASM source is not the pinned clean OpenJOC checkout.'
+          }
 
       - name: Check the packaged content script bundle
         run: npm run test:bundle
@@ -70,8 +80,12 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          npm run check:hrtf-assets-remote
           npm run package:release -- --version $version
-          npm run validate:release -- --version $version
+          npm run validate:release -- --version $version --hrtf-package standard
+          npm run build:full
+          npm run package:full -- --version $version
+          npm run validate:release -- --version $version --hrtf-package full
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v3
@@ -79,5 +93,7 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            release/OpenJOC-Browser-${{ github.ref_name }}-chromium.zip
-            release/OpenJOC-Browser-${{ github.ref_name }}-chromium.zip.sha256
+            release/OpenJOC-Browser-${{ github.ref_name }}-chromium-standard.zip
+            release/OpenJOC-Browser-${{ github.ref_name }}-chromium-standard.zip.sha256
+            release/OpenJOC-Browser-${{ github.ref_name }}-chromium-full.zip
+            release/OpenJOC-Browser-${{ github.ref_name }}-chromium-full.zip.sha256

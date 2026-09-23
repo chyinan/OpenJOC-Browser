@@ -2,15 +2,24 @@
 
 import {isRuntimeMessage} from '../src/extension-protocol.js';
 import {advanceOverlayState, createOverlayState, OVERLAY_RENDERER_OPTIONS} from '../src/joc-overlay-state.js';
+import {HRTF_PRESET_OPTIONS} from '../src/hrtf-presets.js';
+import {supportsExternalHrtfAssetAbi} from '../src/wasm-bindings.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
 }
 
 function run(): void {
+  const legacyWasm = {exports: {openjoc_wasm_decoder_create_with_renderer_and_hrtf: (): number => 1}} as unknown as WebAssembly.Instance;
+  const assetWasm = {exports: {openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset: (): number => 1}} as unknown as WebAssembly.Instance;
+  assert(!supportsExternalHrtfAssetAbi(legacyWasm), 'legacy embedded WASM uses its built-in preset path');
+  assert(supportsExternalHrtfAssetAbi(assetWasm), 'external-asset WASM uses the selected packaged resource');
+
   const binauralOption = OVERLAY_RENDERER_OPTIONS.find((option) => option.renderer === 'binaural-headphones');
   assert(binauralOption?.enabled === true, 'Binaural renderer is an explicit available option');
   assert(binauralOption?.label === 'Binaural (Headphones)', 'Binaural renderer uses the factual user-facing label');
+  assert(HRTF_PRESET_OPTIONS.length === 3, 'all built-in HRTF profiles are exposed');
+  assert(HRTF_PRESET_OPTIONS[0]?.id === 'sadie-ii-d1-ku100', 'D1 remains the browser HRTF default');
 
   const rendererState = advanceOverlayState(
     createOverlayState(),

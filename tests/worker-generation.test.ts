@@ -39,9 +39,11 @@ async function runAsync(): Promise<void> {
   const first = deferred();
   const second = deferred();
   let loadCount = 0;
+  const loadSignals: Array<AbortSignal> = [];
   const slot = new DecoderGenerationSlot<FakeDecoder>(
-    async (): Promise<FakeDecoder> => {
+    async (signal: AbortSignal): Promise<FakeDecoder> => {
       loadCount += 1;
+      loadSignals.push(signal);
       return loadCount === 1 ? first.promise : second.promise;
     },
     (decoder): void => {
@@ -53,10 +55,53 @@ async function runAsync(): Promise<void> {
   const newLoad = slot.start(2);
   second.resolve({id: 'new'});
   assert((await newLoad)?.id === 'new', 'new decoder becomes current');
+  assert(loadSignals[0]?.aborted === true, 'newer selection aborts the previous pending asset load');
   first.resolve({id: 'old'});
   assert((await oldLoad) === null, 'late old decoder is rejected');
   assert(slot.current()?.id === 'new', 'late old load cannot clear new decoder');
   assert(destroyed.includes('old'), 'late old decoder is destroyed locally');
+
+  const staleReplacement = deferred();
+  const canceledLoads: Array<string> = [];
+  let requestedLoadCount = 0;
+  const canceledSlot = new DecoderGenerationSlot<FakeDecoder>(
+    async (): Promise<FakeDecoder> => {
+      requestedLoadCount += 1;
+      return requestedLoadCount === 1 ? {id: 'active-before-cancel'} : staleReplacement.promise;
+    },
+    (decoder): void => {
+      canceledLoads.push(decoder.id);
+    },
+  );
+  const activeBeforeCancel = await canceledSlot.start(1);
+  canceledSlot.finish(1);
+  const pendingReplacement = canceledSlot.start(2);
+  canceledSlot.cancelPendingLoad();
+  staleReplacement.resolve({id: 'late-canceled-replacement'});
+  assert((await pendingReplacement) === null, 'an aborted load cannot commit after non-abortable digest work settles');
+  assert(canceledSlot.current() === activeBeforeCancel, 'canceled replacement preserves the active decoder');
+  assert(canceledLoads.includes('late-canceled-replacement'), 'late decoder from a canceled load is destroyed');
+
+  let replacementAttempts = 0;
+  const retainedSlot = new DecoderGenerationSlot<FakeDecoder>(
+    async (): Promise<FakeDecoder> => {
+      replacementAttempts += 1;
+      if (replacementAttempts === 1) return {id: 'working'};
+      throw new Error('asset checksum mismatch');
+    },
+    (decoder): void => {
+      destroyed.push(decoder.id);
+    },
+  );
+  const working = await retainedSlot.start(1);
+  retainedSlot.finish(1);
+  try {
+    await retainedSlot.start(2);
+  } catch {
+    // A rejected replacement must leave the active decoder intact.
+  }
+  assert(retainedSlot.current() === working, 'failed replacement keeps the previous decoder');
+  assert(!destroyed.includes('working'), 'the previous decoder is not destroyed on failed load');
 }
 
 run();

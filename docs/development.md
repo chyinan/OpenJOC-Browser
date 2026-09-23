@@ -5,11 +5,11 @@
 - Node.js `24.15.0`, recorded in `.nvmrc` and constrained by `package.json` engines.
 - npm with the committed `package-lock.json`; use `npm ci`.
 - Rust `1.85` or newer with the `wasm32-unknown-unknown` target.
-- Git, because the build resolves the pinned OpenJOC source repository.
+- Git, to record the OpenJOC revision used by the build.
 
-The Browser build uses OpenJOC commit `e123aa3a0e2878587c73130585a5606db4ff233f` from `https://github.com/chyinan/OpenJOC.git`. Without `OPENJOC_ROOT`, the resolver shallow-clones the public `codex/openjoc-wasm-bridge` ref into ignored `.cache/openjoc/<commit>/`, checks out the exact commit, and verifies `HEAD` before invoking Cargo. If Git transport is unavailable, it falls back to the GitHub codeload archive URL for that same commit and verifies an exact pin marker. The branch is only a fetch aid; the build never compiles an unpinned checkout.
+For coordinated local development, the build prefers a neighboring `OpenJOC` checkout; `OPENJOC_ROOT` can explicitly select any local source tree with `Cargo.toml`. The generated `extension/wasm/openjoc-build-info.json` records the source commit and whether the Git tree is dirty. This lets the Browser use the active OpenJOC source rather than rejecting it for not matching an older pin.
 
-For a local checkout, set `OPENJOC_ROOT` to a working tree at that exact commit. The resolver rejects another branch or commit. This override is for development and offline validation; a fresh clone does not require it.
+When no neighboring or explicitly selected checkout exists, the resolver checks out the configured public source ref (default `master`). Set `OPENJOC_SOURCE_PIN` to a full 40-hex commit SHA to build from one exact commit; path-like or abbreviated pins are rejected. Pinned archives are used only when Git transport is unavailable and a valid pin was supplied. Release artifacts record the resolved commit and dirty state. The selected OpenJOC revision must contain the external-HRTF asset ABI and `external-builtin-hrtf-assets` feature; until those changes are present on the public ref, use `OPENJOC_ROOT` or `OPENJOC_SOURCE_PIN` to select the compatible clean source snapshot.
 
 ## Install and gates
 
@@ -35,16 +35,24 @@ npm run parity -- fixtures/joc.lifecycle.ec3 --binaural
 npm run cmaf-parity -- --binaural
 ```
 
-`npm run build` builds the pinned `openjoc-wasm` crate for `wasm32-unknown-unknown`, compiles TypeScript into ignored `extension/*.js`, bundles the classic Bilibili content script, and copies the WASM into ignored `extension/wasm/`. `npm run parity` requires bit-identical native-vs-WASM PCM; `npm run cmaf-parity` requires bit-identical raw-vs-CMAF PCM.
+`npm run build` produces the Standard package: the WASM renderer, generated built-in manifest, and D1 only. D2 and Aachen remain selectable, but are downloaded from the pinned HTTPS GitHub Release URL when selected, after which the canonical `.ojhrtf` is verified and cached in extension Cache Storage. `npm run build:full` produces a Full offline package with the same three `.ojhrtf` assets and SHA-256 values. The build validates all source asset hashes in either mode and removes stale assets from the other package mode. The asset URL is fixed to the OpenJOC HRTF release path; the manifest loader rejects a different GitHub owner or repository.
+
+`npm run parity` requires bit-identical native-vs-WASM PCM; `npm run cmaf-parity` requires bit-identical raw-vs-CMAF PCM.
 
 ## Package and validate
 
 ```powershell
+npm run build
 npm run package:release -- --version 0.1.0
-npm run validate:release -- --version 0.1.0
+npm run validate:release -- --version 0.1.0 --hrtf-package standard
+npm run build:full
+npm run package:full -- --version 0.1.0
+npm run validate:release -- --version 0.1.0 --hrtf-package full
 ```
 
-The package script creates one `OpenJOC-Browser-v0.1.0-chromium.zip` with a directly loadable top-level directory, `LICENSE`, and `THIRD_PARTY_NOTICES.txt`. It also writes a sibling `.sha256` file. The validator parses and unpacks the stored ZIP, checks the manifest references, verifies the WASM and notices, rejects development junk, and checks the checksum.
+The package scripts create `OpenJOC-Browser-v0.1.0-chromium-standard.zip` and `OpenJOC-Browser-v0.1.0-chromium-full.zip`, each with a directly loadable top-level directory, `LICENSE`, and `THIRD_PARTY_NOTICES.txt`. Each writes a sibling `.sha256` file. The validator checks package mode, bundled asset list, all declared byte lengths and SHA-256 values, manifest references, WASM/notices, and the ZIP checksum.
+
+Before publishing a Browser release, upload `sadie-ii-d2-kemar.ojhrtf` and `aachen-high-resolution-kemar.ojhrtf` from the verified OpenJOC source assets to the immutable `openjoc-hrtf-v2.0.0` GitHub Release. The remote asset release is separate from the Browser ZIP release. The release workflow runs `npm run check:hrtf-assets-remote`, which streams both remote files and blocks packaging if either response, byte length, or SHA-256 differs from the local registry.
 
 ## Local browser QA
 

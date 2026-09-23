@@ -2,6 +2,7 @@
 
 import {isLegacyOffscreenStatus, isRuntimeMessage, type BilibiliAudioCandidate, type MediaKey, type RendererMode, type RuntimeMessage} from './extension-protocol.js';
 import {isAllowedBilibiliMediaUrl} from './media-url-policy.js';
+import {DEFAULT_HRTF_PRESET, normalizeHrtfPreset, type HrtfPreset} from './hrtf-presets.js';
 import {isContentSessionReset, isStaleContentGeneration, mediaSessionRestartRequired, nextManifestGeneration, type MediaSessionSnapshot} from './media-session-policy.js';
 
 type BilibiliSession = {
@@ -17,9 +18,17 @@ type BilibiliSession = {
   readonly buffering: boolean;
   readonly dialnorm: 'calibrated' | 'unity';
   readonly renderer: RendererMode;
+  readonly hrtf: HrtfPreset;
   readonly gainDb: number;
   readonly started: boolean;
 };
+
+type PendingHrtfSwitch = Readonly<{
+  readonly fallback: BilibiliSession;
+  readonly requestId: string;
+  readonly generation: number;
+  readonly requestedHrtf: HrtfPreset;
+}>;
 
 type PendingPageRange = Readonly<{
   readonly tabId: number;
@@ -31,6 +40,7 @@ type PendingPageRange = Readonly<{
 
 const OFFSCREEN_PATH = 'offscreen.html';
 const sessions = new Map<number, BilibiliSession>();
+const pendingHrtfSwitches = new Map<number, PendingHrtfSwitch>();
 const activeDocumentIds = new Map<number, string>();
 const pendingPageRanges = new Map<string, PendingPageRange>();
 const lifecycleTails = new Map<number, Promise<void>>();
@@ -141,7 +151,7 @@ function invalidateObservedSessions(observedSessions: ReadonlyArray<BilibiliSess
 
 async function sendSessionStart(session: BilibiliSession): Promise<void> {
   try {
-    await sendToOffscreen({target: 'offscreen', type: 'start', requestId: session.requestId, tabId: session.tabId, pageUrl: session.pageUrl, mediaKey: session.mediaKey, candidate: session.candidate, generation: session.generation, videoTimeSamples: session.videoTimeSamples, paused: session.paused, buffering: session.buffering, dialnorm: session.dialnorm, renderer: session.renderer, gainDb: session.gainDb});
+    await sendToOffscreen({target: 'offscreen', type: 'start', requestId: session.requestId, tabId: session.tabId, pageUrl: session.pageUrl, mediaKey: session.mediaKey, candidate: session.candidate, generation: session.generation, videoTimeSamples: session.videoTimeSamples, paused: session.paused, buffering: session.buffering, dialnorm: session.dialnorm, renderer: session.renderer, hrtf: session.hrtf, gainDb: session.gainDb});
   } catch (error: unknown) {
     const current = sessions.get(session.tabId);
     if (current?.requestId === session.requestId && current.generation === session.generation) {
@@ -168,6 +178,7 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
       const previous = sessions.get(tabId);
       if (previous !== undefined && previous.documentId !== documentId) {
         sessions.delete(tabId);
+        pendingHrtfSwitches.delete(tabId);
         if (previous.started) await sendToOffscreen({target: 'offscreen', type: 'disable', tabId, mediaKey: previous.mediaKey, generation: previous.generation});
       }
     }
@@ -197,12 +208,35 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
         : isContentSessionReset(previousSnapshot, mediaKeyString(message.mediaKey), message.generation);
       if (isReloadRecovery) {
         sessions.delete(tabId);
+        pendingHrtfSwitches.delete(tabId);
         if (previous?.started === true) await sendToOffscreen({target: 'offscreen', type: 'disable', tabId, mediaKey: previous.mediaKey, generation: previous.generation});
       }
       const baseline = isReloadRecovery ? undefined : previous;
       if (isStaleContentGeneration(isReloadRecovery ? null : previousSnapshot, message.generation)) return;
       const generation = Math.max(message.generation, baseline?.started === true ? baseline.generation + 1 : baseline?.generation ?? 0);
-      const next = {tabId, documentId, requestId: message.requestId, pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: message.videoTimeSamples, paused: message.paused ?? false, buffering: message.buffering ?? false, dialnorm: message.dialnorm, renderer: message.renderer, gainDb: message.gainDb ?? 0, started: true};
+      const selectedHrtf = normalizeHrtfPreset(message.hrtf);
+      const next = {tabId, documentId, requestId: message.requestId, pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: message.videoTimeSamples, paused: message.paused ?? false, buffering: message.buffering ?? false, dialnorm: message.dialnorm, renderer: message.renderer, hrtf: selectedHrtf, gainDb: message.gainDb ?? 0, started: true};
+      const priorSwitch = pendingHrtfSwitches.get(tabId);
+      const fallback = priorSwitch?.fallback ?? baseline;
+      const isHrtfOnlySwitch = previous?.started === true
+        && !isReloadRecovery
+        && previous.renderer === 'binaural'
+        && next.renderer === 'binaural'
+        && previous.hrtf !== selectedHrtf
+        && fallback?.renderer === 'binaural'
+        && mediaKeyEquals(fallback.mediaKey, next.mediaKey)
+        && fallback.candidate.baseUrl === next.candidate.baseUrl
+        && fallback.documentId === next.documentId;
+      if (isHrtfOnlySwitch && fallback !== undefined) {
+        pendingHrtfSwitches.set(tabId, {
+          fallback,
+          requestId: next.requestId,
+          generation: next.generation,
+          requestedHrtf: selectedHrtf,
+        });
+      } else {
+        pendingHrtfSwitches.delete(tabId);
+      }
       sessions.set(tabId, next);
       await sendSessionStart(next);
       return;
@@ -223,6 +257,7 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
         : isContentSessionReset(previousSnapshot, mediaKeyString(message.mediaKey), message.generation);
       if (isReloadRecovery) {
         sessions.delete(tabId);
+        pendingHrtfSwitches.delete(tabId);
         if (previous?.started === true) await sendToOffscreen({target: 'offscreen', type: 'disable', tabId, mediaKey: previous.mediaKey, generation: previous.generation});
       }
       const baseline = isReloadRecovery ? undefined : previous;
@@ -235,8 +270,9 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
       };
       if (isStaleContentGeneration(baselineSnapshot, message.generation)) return;
       const hasSessionChanged = mediaSessionRestartRequired(baselineSnapshot, nextSnapshot);
+      if (hasSessionChanged) pendingHrtfSwitches.delete(tabId);
       const generation = Math.max(message.generation, nextManifestGeneration(baselineSnapshot, nextSnapshot));
-      const next = {tabId, documentId, requestId: baseline?.requestId ?? crypto.randomUUID(), pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: baseline?.videoTimeSamples ?? 0, paused: baseline?.paused ?? false, buffering: baseline?.buffering ?? false, dialnorm: baseline?.dialnorm ?? 'calibrated', renderer: baseline?.renderer ?? 'stereo', gainDb: baseline?.gainDb ?? 0, started: baseline?.started ?? false};
+      const next = {tabId, documentId, requestId: baseline?.requestId ?? crypto.randomUUID(), pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: baseline?.videoTimeSamples ?? 0, paused: baseline?.paused ?? false, buffering: baseline?.buffering ?? false, dialnorm: baseline?.dialnorm ?? 'calibrated', renderer: baseline?.renderer ?? 'stereo', hrtf: baseline?.hrtf ?? DEFAULT_HRTF_PRESET, gainDb: baseline?.gainDb ?? 0, started: baseline?.started ?? false};
       sessions.set(tabId, next);
       if (baseline?.started === true && hasSessionChanged) await sendSessionStart(next);
       return;
@@ -245,6 +281,7 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
       const session = sessions.get(tabId);
       if (session === undefined) return;
       if (session.started) {
+        pendingHrtfSwitches.delete(tabId);
         await sendToOffscreen({target: 'offscreen', type: 'disable', tabId, mediaKey: session.mediaKey, generation: session.generation});
         sessions.set(tabId, {...session, started: false});
         return;
@@ -295,6 +332,7 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
     case 'disable': {
       const session = sessions.get(tabId);
       if (session === undefined || !mediaKeyEquals(message.mediaKey, session.mediaKey) || message.generation < session.generation) return;
+      pendingHrtfSwitches.delete(tabId);
       const nextGeneration = Math.max(message.generation, session.generation);
       if (session.started === true) await sendToOffscreen({target: 'offscreen', type: 'disable', tabId, mediaKey: session.mediaKey, generation: session.generation});
       sessions.set(tabId, {...session, started: false, generation: nextGeneration});
@@ -428,6 +466,52 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessage
   if (!isRuntimeMessage(rawMessage) || rawMessage.target !== 'background' || rawMessage.type !== 'offscreen-status' || sender.id !== chrome.runtime.id) return;
   const session = sessions.get(rawMessage.tabId);
   if (session !== undefined && rawMessage.requestId === session.requestId && mediaKeyEquals(rawMessage.mediaKey, session.mediaKey) && rawMessage.generation >= session.generation) {
+    const pendingHrtfSwitch = pendingHrtfSwitches.get(rawMessage.tabId);
+    if (rawMessage.phase === 'error'
+      && rawMessage.reason?.toLowerCase().includes('hrtf') === true
+      && pendingHrtfSwitch?.requestId === rawMessage.requestId
+      && pendingHrtfSwitch.generation === session.generation
+      && rawMessage.metrics.hrtf === pendingHrtfSwitch.fallback.hrtf) {
+      pendingHrtfSwitches.delete(rawMessage.tabId);
+      const restoredSession: BilibiliSession = {
+        ...pendingHrtfSwitch.fallback,
+        requestId: session.requestId,
+        generation: rawMessage.generation + 1,
+        videoTimeSamples: session.videoTimeSamples,
+        paused: session.paused,
+        buffering: session.buffering,
+        dialnorm: session.dialnorm,
+        gainDb: session.gainDb,
+        started: true,
+      };
+      sessions.set(rawMessage.tabId, restoredSession);
+      const rollbackStatus: RuntimeMessage = {
+        ...rawMessage,
+        generation: restoredSession.generation,
+        phase: 'preparing',
+        reason: `hrtf-load-error-rollback: ${rawMessage.reason}`,
+        metrics: {
+          ...rawMessage.metrics,
+          stage: 'hrtf-load-error-rollback',
+          renderer: restoredSession.renderer,
+          virtualLayout: restoredSession.renderer === 'binaural' ? '7.1.4' : null,
+          hrtf: restoredSession.renderer === 'binaural' ? restoredSession.hrtf : null,
+        },
+      };
+      void chrome.tabs.sendMessage(rawMessage.tabId, rollbackStatus).catch(() => undefined);
+      void sendSessionStart(restoredSession).catch(() => {
+        const current = sessions.get(restoredSession.tabId);
+        if (current?.requestId === restoredSession.requestId && current.generation === restoredSession.generation) {
+          sessions.set(restoredSession.tabId, {...current, started: false});
+        }
+      });
+      return;
+    }
+    if (pendingHrtfSwitch?.requestId === rawMessage.requestId
+      && rawMessage.phase !== 'error'
+      && rawMessage.metrics.hrtf === pendingHrtfSwitch.requestedHrtf) {
+      pendingHrtfSwitches.delete(rawMessage.tabId);
+    }
     sessions.set(rawMessage.tabId, {...session, started: rawMessage.phase !== 'disabled' && rawMessage.phase !== 'error', generation: rawMessage.generation});
     void chrome.tabs.sendMessage(rawMessage.tabId, rawMessage).catch(() => undefined);
   }

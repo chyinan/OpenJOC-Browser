@@ -19,9 +19,11 @@ const PREFETCH_INTERVAL_MS = 250;
 const VIDEO_CLOCK_STALE_AFTER_MS = 350;
 const WORKLET_PREFETCH_LOW_WATER_MS = 2_000;
 const PREPARATION_TIMEOUT_MS = 30_000;
+const HRTF_PREPARATION_TIMEOUT_MS = 5 * 60_000;
 const DECODER_PROGRESS_TIMEOUT_MS = 10_000;
 
-type SessionStage = 'starting-audio' | 'starting-decoder' | 'fetching-index' | 'fetching-page-context-index' | 'fetching-segment' | 'decoding' | 'waiting-for-joc-profile' | 'streaming';
+type SessionStage = 'starting-audio' | 'starting-decoder' | 'fetching-index' | 'fetching-page-context-index' | 'fetching-segment' | 'decoding' | 'waiting-for-joc-profile' | 'streaming'
+  | 'hrtf-available' | 'hrtf-download-required' | 'hrtf-downloading' | 'hrtf-cached' | 'hrtf-verifying' | 'hrtf-preparing';
 
 type WorkletStats = Readonly<{
   readonly queuedAudioMs: number;
@@ -148,7 +150,7 @@ function sendStatus(
     stage: session.stage,
     renderer: decoder?.renderer ?? session.request.renderer,
     virtualLayout: decoder?.virtualLayout ?? (session.request.renderer === 'binaural' ? '7.1.4' : null),
-    hrtf: decoder?.hrtf ?? (session.request.renderer === 'binaural' ? 'Built-in SADIE II D1' : null),
+    hrtf: decoder?.hrtf ?? (session.request.renderer === 'binaural' ? (session.request.hrtf ?? 'sadie-ii-d1-ku100') : null),
     binauralLatencyMs: decoder?.renderer === 'binaural' ? decoder.latencySamples * 1000 / SAMPLE_RATE : null,
     binauralP95Ms: decoder?.renderer === 'binaural' ? decoder.binauralP95Ms : null,
     binauralMaxMs: decoder?.renderer === 'binaural' ? decoder.binauralMaxMs : null,
@@ -347,6 +349,12 @@ function resolveDecoderProgress(status: DecoderWorkerStatus): void {
 function handleWorkerMessage(message: WorkerMessage): void {
   const session = currentSession;
   if (session === null || message.generation !== session.audioGeneration) return;
+  if (message.type === 'hrtf-load-state') {
+    session.stage = `hrtf-${message.stage}`;
+    resetPreparationTimer(session, HRTF_PREPARATION_TIMEOUT_MS);
+    sendStatus('preparing', `hrtf-load-state:${message.stage}`, session);
+    return;
+  }
   if (message.type === 'pcm') {
     if (audioNode === null || message.ptsSamples === null) {
       void failSession('OpenJOC did not return a timestamped CMAF PCM block');
@@ -405,7 +413,7 @@ async function pumpSegments(session: Session): Promise<void> {
         if (!isCurrentSession(session)) return;
         session.stage = 'decoding';
         const buffer = sample.bytes.slice().buffer;
-        decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.audioGeneration, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm, renderer: session.request.renderer} satisfies WorkerCommand, [buffer]);
+        decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.audioGeneration, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm, renderer: session.request.renderer, hrtf: session.request.hrtf} satisfies WorkerCommand, [buffer]);
         firstSample = false;
       }
       await waitForDecoderProgress(session, previousAccessUnits);
@@ -547,9 +555,7 @@ async function startSession(request: StartRequest, token: number): Promise<void>
   if (token !== latestStartToken || pendingStart?.token !== token) return;
   const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: preservedPlayerState?.playerVolume ?? 1, playerMuted: preservedPlayerState?.playerMuted ?? false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: preservedPlayerState?.isNativeMuted ?? false, activationPending: preservedPlayerState?.activationPending ?? false, isJocConfirmed: false, isPaused: request.paused, isBuffering: request.buffering, phase: request.buffering ? 'buffering' : request.paused ? 'paused' : 'preparing', stage: 'starting-audio', preparationTimer: null};
   currentSession = session;
-  session.preparationTimer = window.setTimeout((): void => {
-    if (isCurrentSession(session) && !session.isJocConfirmed) void failSession(`OpenJOC ${session.stage} timed out before JOC PCM became available`);
-  }, PREPARATION_TIMEOUT_MS);
+  resetPreparationTimer(session, PREPARATION_TIMEOUT_MS);
   latestVideoMediaSamples = request.videoTimeSamples;
   lastVideoClockAtMs = performance.now();
   lastVideoPlaybackRate = 1;
@@ -579,6 +585,15 @@ async function startSession(request: StartRequest, token: number): Promise<void>
   } catch (error: unknown) {
     if (!session.abort.signal.aborted) await failSession(error instanceof Error ? error.message : 'failed to prepare Bilibili CMAF media');
   }
+}
+
+function resetPreparationTimer(session: Session, timeoutMs: number): void {
+  if (session.preparationTimer !== null) window.clearTimeout(session.preparationTimer);
+  session.preparationTimer = window.setTimeout((): void => {
+    if (isCurrentSession(session) && !session.isJocConfirmed) {
+      void failSession(`OpenJOC ${session.stage} timed out before JOC PCM became available`);
+    }
+  }, timeoutMs);
 }
 
 function enqueueStartSession(request: StartRequest): void {

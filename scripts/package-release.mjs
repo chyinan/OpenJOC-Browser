@@ -10,7 +10,13 @@ const extensionRoot = join(browserRoot, 'extension');
 const packageManifest = JSON.parse(readFileSync(join(browserRoot, 'package.json'), 'utf8'));
 const extensionManifest = JSON.parse(readFileSync(join(extensionRoot, 'manifest.json'), 'utf8'));
 const version = argumentValue('--version') ?? packageManifest.version;
-const output = resolve(browserRoot, argumentValue('--output') ?? `release/OpenJOC-Browser-v${version}-chromium.zip`);
+const hrtfManifest = JSON.parse(readFileSync(join(extensionRoot, 'wasm', 'hrtf', 'manifest.json'), 'utf8'));
+const requestedHrtfPackage = argumentValue('--hrtf-package');
+const hrtfPackageKind = requestedHrtfPackage ?? hrtfManifest.packageKind;
+if ((hrtfPackageKind !== 'standard' && hrtfPackageKind !== 'full') || hrtfPackageKind !== hrtfManifest.packageKind) {
+  throw new Error(`HRTF package mode mismatch: requested=${hrtfPackageKind}, built=${hrtfManifest.packageKind}`);
+}
+const output = resolve(browserRoot, argumentValue('--output') ?? `release/OpenJOC-Browser-v${version}-chromium-${hrtfPackageKind}.zip`);
 
 if (packageManifest.version !== version || extensionManifest.version !== version) {
   throw new Error(`release version mismatch: package=${packageManifest.version}, extension=${extensionManifest.version}, requested=${version}`);

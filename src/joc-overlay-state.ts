@@ -2,6 +2,7 @@
 
 import {DEFAULT_OVERLAY_LANGUAGE, normalizeOverlayLanguage, type OverlayLanguage} from './joc-overlay-i18n.js';
 import {normalizeOutputGainDb} from './output-gain.js';
+import {DEFAULT_HRTF_PRESET, type HrtfPreset} from './hrtf-presets.js';
 
 export type OverlayMode = 'hidden' | 'detected' | 'active' | 'collapsed' | 'diagnostics' | 'raw' | 'error' | 'nonjoc';
 
@@ -23,6 +24,7 @@ export const OVERLAY_RENDERER_OPTIONS: ReadonlyArray<OverlayRendererOption> = [
 export type OverlayState = Readonly<{
   readonly mode: OverlayMode;
   readonly renderer: OverlayRenderer;
+  readonly hrtf: HrtfPreset;
   readonly dialnorm: DialnormMode;
   readonly gainDb: number;
   readonly alwaysEnabled: boolean;
@@ -49,6 +51,7 @@ export type OverlayEvent =
   | Readonly<{readonly type: 'dismiss-detection'}>
   | Readonly<{readonly type: 'close-nonjoc'}>
   | Readonly<{readonly type: 'set-renderer'; readonly renderer: OverlayRenderer}>
+  | Readonly<{readonly type: 'set-hrtf'; readonly hrtf: HrtfPreset}>
   | Readonly<{readonly type: 'set-dialnorm'; readonly mode: DialnormMode}>
   | Readonly<{readonly type: 'set-gain'; readonly gainDb: number}>
   | Readonly<{readonly type: 'set-language'; readonly language: OverlayLanguage}>
@@ -60,6 +63,7 @@ export function createOverlayState(): OverlayState {
   return {
     mode: 'hidden',
     renderer: 'stereo-speakers',
+    hrtf: DEFAULT_HRTF_PRESET,
     dialnorm: 'calibrated',
     gainDb: 0,
     alwaysEnabled: false,
@@ -72,7 +76,7 @@ export function createOverlayState(): OverlayState {
 
 /** Resets page/display lifecycle while preserving user-selected audio policy. */
 export function resetOverlayState(state: Readonly<OverlayState>): OverlayState {
-  return {...createOverlayState(), renderer: state.renderer, dialnorm: state.dialnorm, gainDb: state.gainDb, alwaysEnabled: state.alwaysEnabled, language: state.language};
+  return {...createOverlayState(), renderer: state.renderer, hrtf: state.hrtf, dialnorm: state.dialnorm, gainDb: state.gainDb, alwaysEnabled: state.alwaysEnabled, language: state.language};
 }
 
 export function overlayRendererLabel(renderer: OverlayRenderer): string {
@@ -127,6 +131,8 @@ export function advanceOverlayState(state: Readonly<OverlayState>, event: Overla
       return state.mode === 'nonjoc' ? {...state, mode: 'hidden'} : state;
     case 'set-renderer':
       return isAvailableRenderer(event.renderer) ? {...state, renderer: event.renderer} : state;
+    case 'set-hrtf':
+      return {...state, hrtf: event.hrtf};
     case 'set-dialnorm':
       return {...state, dialnorm: event.mode};
     case 'set-gain':
