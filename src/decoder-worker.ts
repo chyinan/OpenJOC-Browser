@@ -6,7 +6,7 @@ import {DecoderGenerationSlot} from './decoder-generation.js';
 import {MAX_CMAF_DECODE_QUEUE_MS, shouldWaitForCmafAudioBudget} from './decode-backpressure.js';
 import {MAX_INPUT_FILE_BYTES, type WorkerCommand, type WorkerMessage} from './worker-protocol.js';
 import {type RendererMode} from './extension-protocol.js';
-import {DEFAULT_HRTF_PRESET, type HrtfPreset} from './hrtf-presets.js';
+import {DEFAULT_HRTF_PRESET, hrtfRendererCacheKey, type HrtfSelection} from './hrtf-presets.js';
 
 const workerScope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 const CHUNK_BYTES = 64 * 1024;
@@ -15,7 +15,7 @@ const MAX_DECODE_QUEUE_MS = 1_000;
 const decoderSlot = new DecoderGenerationSlot<WasmDecoderClient>(
   async (signal: AbortSignal, loadingGeneration: number): Promise<WasmDecoderClient> => loadOpenJocWasm(
     new URL('./wasm/openjoc_wasm.wasm', import.meta.url),
-    {dialnormMode, renderer: rendererMode, hrtf: hrtfPreset},
+    {dialnormMode, renderer: rendererMode, hrtf: hrtfPreset, hrtfRevision},
     {
       signal,
       onHrtfLoadStage: (stage): void => postMessage({type: 'hrtf-load-state', generation: loadingGeneration, stage}),
@@ -32,7 +32,8 @@ let wakeResolver: (() => void) | null = null;
 let decoderMode: string | null = null;
 let dialnormMode: 'calibrated' | 'unity' = 'calibrated';
 let rendererMode: RendererMode = 'stereo';
-let hrtfPreset: HrtfPreset = DEFAULT_HRTF_PRESET;
+let hrtfPreset: HrtfSelection = DEFAULT_HRTF_PRESET;
+let hrtfRevision: string | null = null;
 let cmafCommandTail: Promise<void> = Promise.resolve();
 
 function postMessage(message: WorkerMessage, transfer: Array<ArrayBuffer> = []): void {
@@ -179,7 +180,7 @@ async function decodeBytes(bytes: ArrayBuffer, currentGeneration: number): Promi
   }
 }
 
-async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, requestedRenderer: RendererMode, requestedHrtf: HrtfPreset): Promise<void> {
+async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, requestedRenderer: RendererMode, requestedHrtf: HrtfSelection, requestedHrtfRevision: string | null): Promise<void> {
   if (bytes.byteLength > MAX_INPUT_FILE_BYTES) {
     throw new Error(`input file exceeds the ${MAX_INPUT_FILE_BYTES} byte Phase-0 limit`);
   }
@@ -192,6 +193,7 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, req
     dialnormMode = 'calibrated';
     rendererMode = requestedRenderer;
     hrtfPreset = requestedHrtf;
+    hrtfRevision = requestedHrtf === 'custom-sofa' ? requestedHrtfRevision : null;
     const loadedDecoder = await decoderSlot.start(currentGeneration);
     if (!isCurrentGeneration(currentGeneration, generation) || loadedDecoder === null) {
       return;
@@ -208,14 +210,15 @@ async function handleDecode(bytes: ArrayBuffer, requestedGeneration: number, req
   }
 }
 
-async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: 'calibrated' | 'unity', requestedRenderer: RendererMode, requestedHrtf: HrtfPreset): Promise<boolean> {
-  const requestedMode = `cmaf-${requestedRenderer}-${requestedDialnorm}-${requestedHrtf}`;
-  if (decoderMode === requestedMode && decoderSlot.current() !== null) {
-    return isCurrentGeneration(currentGeneration, generation);
-  }
+async function ensureCmafDecoder(currentGeneration: number, requestedDialnorm: 'calibrated' | 'unity', requestedRenderer: RendererMode, requestedHrtf: HrtfSelection, requestedHrtfRevision: string | null): Promise<boolean> {
+  const requestedMode = `cmaf-${requestedRenderer}-${requestedDialnorm}-${hrtfRendererCacheKey(requestedHrtf, requestedHrtfRevision)}`;
   dialnormMode = requestedDialnorm;
   rendererMode = requestedRenderer;
   hrtfPreset = requestedHrtf;
+  hrtfRevision = requestedHrtf === 'custom-sofa' ? requestedHrtfRevision : null;
+  if (decoderMode === requestedMode && decoderSlot.current() !== null) {
+    return isCurrentGeneration(currentGeneration, generation);
+  }
   const loadedDecoder = await decoderSlot.start(currentGeneration);
   if (!isCurrentGeneration(currentGeneration, generation) || loadedDecoder === null) {
     return false;
@@ -239,7 +242,7 @@ async function handleCmafSample(command: Extract<WorkerCommand, {type: 'decode-c
   if (command.generation < generation) return;
   generation = Math.max(generation, command.generation);
   const currentGeneration = command.generation;
-  if (!(await ensureCmafDecoder(currentGeneration, command.dialnorm, command.renderer, command.hrtf ?? DEFAULT_HRTF_PRESET))) return;
+  if (!(await ensureCmafDecoder(currentGeneration, command.dialnorm, command.renderer, command.hrtf ?? DEFAULT_HRTF_PRESET, command.hrtfRevision ?? null))) return;
   await waitForCmafPlaybackBudget();
   if (!isCurrentGeneration(currentGeneration, generation)) return;
   const status = requireDecoder().pushPacket(new Uint8Array(command.bytes), {
@@ -274,11 +277,11 @@ async function handleCmafEnd(command: Extract<WorkerCommand, {type: 'end-cmaf'}>
 async function handleCommand(command: WorkerCommand): Promise<void> {
   switch (command.type) {
       case 'decode':
-        await handleDecode(command.bytes, command.generation, command.renderer ?? 'stereo', command.hrtf ?? DEFAULT_HRTF_PRESET);
+        await handleDecode(command.bytes, command.generation, command.renderer ?? 'stereo', command.hrtf ?? DEFAULT_HRTF_PRESET, command.hrtfRevision ?? null);
         return;
       case 'prepare-cmaf-decoder':
         if (!isCurrentGeneration(command.generation, generation)) return;
-        await ensureCmafDecoder(command.generation, command.dialnorm, command.renderer, command.hrtf ?? DEFAULT_HRTF_PRESET);
+        await ensureCmafDecoder(command.generation, command.dialnorm, command.renderer, command.hrtf ?? DEFAULT_HRTF_PRESET, command.hrtfRevision ?? null);
         return;
       case 'decode-cmaf-sample':
         await handleCmafSample(command);
@@ -323,7 +326,8 @@ function handleCommandError(command: WorkerCommand, error: unknown): void {
   }
   const status = decoderSlot.current()?.status();
   const errorMessage = error instanceof Error ? error.message : 'OpenJOC worker failed';
-  const hrtfLoadFailed = rendererMode === 'binaural' && status?.hrtf !== hrtfPreset;
+  const hrtfLoadFailed = rendererMode === 'binaural'
+    && (status?.hrtf !== hrtfPreset || status?.hrtfRevision !== hrtfRevision);
   const message = hrtfLoadFailed ? `HRTF selection failed (${hrtfPreset}): ${errorMessage}` : errorMessage;
   postMessage({
     type: 'error',

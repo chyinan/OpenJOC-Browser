@@ -28,7 +28,7 @@ The page-context fallback receives only an exact manifest-discovered media URL a
 - `rendererMode`
 - `outputGainDb`
 
-The extension does not store browsing history, visited URLs, media files, signed media URLs, cookies, credentials, account identifiers, or user audio. Both built-in `.ojhrtf` assets are packaged with the extension and are not downloaded or copied to Cache Storage. The selected asset is checked against its packaged byte length and SHA-256 before the renderer receives it.
+The extension does not store browsing history, visited URLs, media files, signed media URLs, cookies, credentials, account identifiers, or user audio. Both built-in `.ojhrtf` assets are packaged with the extension and are not downloaded or copied to Cache Storage. The selected built-in asset is checked against its packaged byte length and SHA-256 before the renderer receives it. If the user selects Custom SOFA, the chosen SOFA bytes and their SHA-256 are stored only in extension IndexedDB so the selection can be reused locally; they are not uploaded or sent to any website or service.
 
 ## Permissions and hosts
 

@@ -16,7 +16,7 @@ jobs:
   release:
     runs-on: windows-latest
     env:
-      OPENJOC_SOURCE_PIN: ${{ vars.OPENJOC_SOURCE_PIN }}
+      OPENJOC_SOURCE_PIN: ${{ vars.OPENJOC_SOURCE_PIN || 'bedba28a4fd25f5f6c659c15b84b0e763a674f4e' }}
     steps:
       - name: Check out tagged Browser source
         uses: actions/checkout@v7
@@ -41,7 +41,7 @@ jobs:
         shell: pwsh
         run: |
           if (-not $env:OPENJOC_SOURCE_PIN) {
-            throw 'Set the repository variable OPENJOC_SOURCE_PIN to a compatible OpenJOC commit before publishing a Browser release.'
+            throw 'An exact compatible OpenJOC source commit is required before publishing a Browser release.'
           }
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           npm run check:version -- $version

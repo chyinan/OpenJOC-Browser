@@ -10,6 +10,7 @@ async function createBackground(options = {}) {
   const startupListeners = [];
   const sent = [];
   const replies = [];
+  const storageData = {...options.storage};
   let documentExists = true;
   const runtime = createSourceRuntime({caches: options.caches, console: options.console ?? console, chrome: {
     action: {onClicked: {addListener() {}}},
@@ -21,19 +22,30 @@ async function createBackground(options = {}) {
       onStartup: {addListener(listener) {startupListeners.push(listener);}},
       async sendMessage(message) {sent.push(message);},
     },
+    storage: {local: {
+      async get(keys) {
+        const selected = Array.isArray(keys) ? keys : [keys];
+        return Object.fromEntries(selected.filter(key => typeof key === 'string' && Object.hasOwn(storageData, key)).map(key => [key, storageData[key]]));
+      },
+      async set(items) {Object.assign(storageData, items);},
+    }},
     tabs: {async sendMessage(tabId, message) {replies.push(message);}},
     offscreen: {async createDocument() {documentExists = true;}, async closeDocument() {documentExists = false;}},
-  }});
+  }}, options.replacements ?? {});
   await runtime.load('service-worker.js');
   return {
     sent,
     replies,
+    storageData,
     loseOffscreen() {documentExists = false;},
     activate(documentId, tabId = 1) {
       for (const listener of listeners) listener({target: 'background', type: 'document-active'}, {id: 'openjoc-test', tab: {id: tabId}, documentId});
     },
     dispatch(message, documentId, tabId = 1) {
-      for (const listener of listeners) listener(message, {id: 'openjoc-test', tab: {id: tabId}, documentId});
+      const replies = [];
+      const sendResponse = (response) => replies.push(response);
+      for (const listener of listeners) listener(message, {id: 'openjoc-test', tab: {id: tabId}, documentId}, sendResponse);
+      return replies;
     },
     install(reason) {
       for (const listener of installedListeners) listener({reason});
@@ -54,9 +66,9 @@ function startMessage(generation, requestId, media = 'A') {
   };
 }
 
-function hrtfSwitchMetrics(hrtf) {
+function hrtfSwitchMetrics(hrtf, hrtfRevision = null) {
   return {
-    stage: 'hrtf-load-error-rollback', renderer: 'binaural', virtualLayout: '7.1.4', hrtf,
+    stage: 'hrtf-load-error-rollback', renderer: 'binaural', virtualLayout: '7.1.4', hrtf, hrtfRevision,
     binauralLatencyMs: null, binauralP95Ms: null, binauralMaxMs: null,
     currentVideoMediaTime: 0, currentAudioMediaTime: null, driftMs: null, averageDb: null,
     driftP50Ms: null, driftP95Ms: null, driftMaxMs: null, resyncCount: 0,
@@ -143,6 +155,234 @@ test('an HRTF asset failure restores the previous binaural profile and playback 
     && message.phase === 'preparing'
     && message.reason.startsWith('hrtf-load-error-rollback:')
     && message.metrics.hrtf === 'sadie-ii-d1-ku100'), 'the content UI is informed that D1 remains active');
+});
+
+test('replacing a Custom SOFA is treated as an HRTF switch even when the preset ID stays the same', async () => {
+  const background = await createBackground();
+  background.activate('document');
+  const previousRevision = 'a'.repeat(64);
+  const requestedRevision = 'b'.repeat(64);
+  const original = {
+    ...startMessage(1, 'custom-sofa-request'),
+    renderer: 'binaural',
+    hrtf: 'custom-sofa',
+    hrtfRevision: previousRevision,
+  };
+  background.dispatch(original, 'document');
+  await waitFor(() => background.sent.some(message => message.type === 'start' && message.requestId === original.requestId), 'initial Custom SOFA session');
+
+  const replacement = {
+    ...original,
+    requestId: 'custom-sofa-replacement',
+    generation: 2,
+    hrtfRevision: requestedRevision,
+  };
+  background.dispatch(replacement, 'document');
+  await waitFor(() => background.sent.some(message => message.type === 'start' && message.requestId === replacement.requestId), 'replacement Custom SOFA session');
+  const failedStart = background.sent.findLast(message => message.type === 'start' && message.requestId === replacement.requestId);
+
+  background.dispatch({
+    target: 'background', type: 'offscreen-status', requestId: replacement.requestId, tabId: 1,
+    mediaKey: replacement.mediaKey, generation: failedStart.generation, phase: 'error',
+    reason: 'HRTF selection failed (custom-sofa): unsupported SOFA direction coverage',
+    inbandJocConfirmed: false, profile: null, metrics: hrtfSwitchMetrics('custom-sofa', previousRevision),
+  }, 'document');
+
+  await waitFor(() => background.sent.some(message => message.type === 'start'
+    && message.requestId === replacement.requestId
+    && message.generation === failedStart.generation + 1
+    && message.hrtf === 'custom-sofa'
+    && message.hrtfRevision === previousRevision), 'previous Custom SOFA data restoration');
+  assert.ok(background.replies.some(message => message.type === 'offscreen-status'
+    && message.phase === 'preparing'
+    && message.reason.startsWith('hrtf-load-error-rollback:')
+    && message.metrics.hrtf === 'custom-sofa'
+    && message.metrics.hrtfRevision === previousRevision), 'the content UI is informed that the previous Custom SOFA remains active');
+});
+
+test('an inactive Custom SOFA import is prevalidated before storage reports success', async () => {
+  let validations = 0;
+  let discarded = 0;
+  let shouldRejectValidation = false;
+  let reusesExistingAsset = false;
+  const background = await createBackground({replacements: {
+    'custom-sofa-storage.js': {
+      abortCustomSofaImport: async () => {},
+      beginCustomSofaImport: async () => {},
+      commitCustomSofaImport: async () => ({
+        bytes: new Uint8Array([1]),
+        byteLength: 1,
+        sha256: ((shouldRejectValidation && !reusesExistingAsset) ? 'b' : 'a').repeat(64),
+        revision: '11111111-1111-4111-8111-111111111111',
+        created: !reusesExistingAsset,
+      }),
+      discardCustomSofaAsset: async () => {discarded += 1;},
+      loadCustomSofaAsset: async () => null,
+      writeCustomSofaImportChunk: async () => {},
+    },
+    'wasm-bindings.js': {
+      async loadOpenJocWasm(_url, options) {
+        validations += 1;
+        assert.equal(options.renderer, 'binaural');
+        assert.equal(options.hrtf, 'custom-sofa');
+        if (shouldRejectValidation) throw new Error('unsupported SOFA direction coverage');
+        return {destroy() {}};
+      },
+    },
+  }});
+  background.activate('document');
+  const transferId = '12345678-1234-4123-8123-123456789abc';
+  const startReplies = background.dispatch({
+    target: 'background', type: 'custom-sofa-import-start', transferId, byteLength: 1,
+  }, 'document');
+  await waitFor(() => startReplies.length > 0, 'Custom SOFA import start');
+  const request = {target: 'background', type: 'custom-sofa-import-commit', transferId, prevalidate: true};
+  const replies = background.dispatch(request, 'document');
+  await waitFor(() => replies.length > 0, 'Custom SOFA prevalidation response');
+  assert.equal(replies[0]?.ok, true);
+  assert.equal(replies[0]?.byteLength, 1);
+  assert.equal(replies[0]?.sha256, 'a'.repeat(64));
+  assert.equal(validations, 1, 'inactive import gets parsed before the preference can be saved');
+  assert.equal(background.storageData.hrtfPreset, 'custom-sofa');
+  assert.equal(background.storageData.hrtfRevision, 'a'.repeat(64));
+
+  shouldRejectValidation = true;
+  const rejectedReplies = background.dispatch({...request, transferId: '22345678-1234-4123-8123-123456789abc'}, 'document');
+  await waitFor(() => rejectedReplies.length > 0, 'failed Custom SOFA prevalidation response');
+  assert.equal(rejectedReplies[0]?.ok, false, 'an unsupported SOFA import fails without claiming success');
+  assert.equal(discarded, 1, 'invalid prevalidated bytes are removed from local storage');
+  assert.equal(background.storageData.hrtfRevision, 'a'.repeat(64), 'failed prevalidation keeps the previously selected SOFA revision');
+
+  reusesExistingAsset = true;
+  const duplicateReplies = background.dispatch({
+    target: 'background', type: 'custom-sofa-import-commit',
+    transferId: '32345678-1234-4123-8123-123456789abc', prevalidate: true,
+  }, 'document');
+  await waitFor(() => duplicateReplies.length > 0, 'duplicate SOFA prevalidation response');
+  assert.equal(duplicateReplies[0]?.ok, false, 'an invalid duplicate selection is rejected');
+  assert.equal(discarded, 1, 'failed duplicate prevalidation preserves the previously selected identical asset');
+});
+
+test('a delayed Custom SOFA import does not overwrite a newer built-in HRTF selection', async () => {
+  const transferId = '11111111-1111-4111-8111-111111111111';
+  const previousSofaHash = 'c'.repeat(64);
+  let preservedSofaHash = null;
+  let releaseValidation = () => {};
+  let markValidationStarted = () => {};
+  const validationStarted = new Promise(resolve => {markValidationStarted = resolve;});
+  const validationGate = new Promise(resolve => {releaseValidation = resolve;});
+  const background = await createBackground({storage: {
+    hrtfPreset: 'sadie-ii-d1-ku100', hrtfRevision: null,
+    customSofaLastRevision: previousSofaHash, hrtfSelectionGeneration: transferId,
+  }, replacements: {
+    'custom-sofa-storage.js': {
+      abortCustomSofaImport: async () => {},
+      beginCustomSofaImport: async () => {},
+      commitCustomSofaImport: async (_transferId, preserveSha256) => {
+        preservedSofaHash = preserveSha256;
+        return {
+        bytes: new Uint8Array([1]),
+        byteLength: 1,
+        sha256: 'a'.repeat(64),
+        revision: '11111111-1111-4111-8111-111111111111',
+        created: true,
+        };
+      },
+      discardCustomSofaAsset: async () => {},
+      loadCustomSofaAsset: async () => null,
+      writeCustomSofaImportChunk: async () => {},
+    },
+    'wasm-bindings.js': {
+      async loadOpenJocWasm() {
+        markValidationStarted();
+        await validationGate;
+        return {destroy() {}};
+      },
+    },
+  }});
+  background.activate('document');
+  const startReplies = background.dispatch({
+    target: 'background', type: 'custom-sofa-import-start', transferId, byteLength: 1,
+  }, 'document');
+  await waitFor(() => startReplies.length > 0, 'Custom SOFA import start');
+  const replies = background.dispatch({
+    target: 'background', type: 'custom-sofa-import-commit',
+    transferId, prevalidate: true,
+  }, 'document');
+  await validationStarted;
+
+  background.storageData.hrtfPreset = 'sadie-ii-d2-kemar';
+  background.storageData.hrtfRevision = null;
+  background.storageData.hrtfSelectionGeneration = '22222222-2222-4222-8222-222222222222';
+  releaseValidation();
+  await waitFor(() => replies.length > 0, 'stale Custom SOFA import response');
+
+  assert.equal(replies[0]?.ok, true, 'the valid SOFA remains available as a local asset');
+  assert.equal(background.storageData.hrtfPreset, 'sadie-ii-d2-kemar', 'the newer user selection remains active');
+  assert.equal(background.storageData.hrtfRevision, null, 'the delayed import does not attach its revision to D2');
+  assert.equal(preservedSofaHash, previousSofaHash, 'the previous cached Custom SOFA remains available after switching away during import');
+});
+
+test('the latest Custom SOFA import wins when an earlier import is still being validated', async () => {
+  const firstSha = 'a'.repeat(64);
+  const secondSha = 'b'.repeat(64);
+  const commitCalls = [];
+  let releaseValidation = () => {};
+  let markValidationStarted = () => {};
+  const validationStarted = new Promise(resolve => {markValidationStarted = resolve;});
+  const validationGate = new Promise(resolve => {releaseValidation = resolve;});
+  const background = await createBackground({replacements: {
+    'custom-sofa-storage.js': {
+      abortCustomSofaImport: async () => {},
+      beginCustomSofaImport: async () => {},
+      async commitCustomSofaImport(transferId, preserveSha256) {
+        commitCalls.push({transferId, preserveSha256});
+        return {
+          bytes: new Uint8Array([1]), byteLength: 1,
+          sha256: transferId.startsWith('1') ? firstSha : secondSha,
+          revision: transferId, created: true,
+        };
+      },
+      discardCustomSofaAsset: async () => {},
+      loadCustomSofaAsset: async () => null,
+      writeCustomSofaImportChunk: async () => {},
+    },
+    'wasm-bindings.js': {
+      async loadOpenJocWasm() {
+        markValidationStarted();
+        await validationGate;
+        return {destroy() {}};
+      },
+    },
+  }});
+  background.activate('first-document');
+  const firstTransferId = '11111111-1111-4111-8111-111111111111';
+  const firstStart = background.dispatch({
+    target: 'background', type: 'custom-sofa-import-start', transferId: firstTransferId, byteLength: 1,
+  }, 'first-document', 1);
+  await waitFor(() => firstStart.length > 0, 'first Custom SOFA import start');
+  const first = background.dispatch({
+    target: 'background', type: 'custom-sofa-import-commit',
+    transferId: firstTransferId, prevalidate: true,
+  }, 'first-document', 1);
+  await validationStarted;
+  background.activate('second-document', 2);
+  const secondTransferId = '22222222-2222-4222-8222-222222222222';
+  const secondStart = background.dispatch({
+    target: 'background', type: 'custom-sofa-import-start', transferId: secondTransferId, byteLength: 1,
+  }, 'second-document', 2);
+  await waitFor(() => secondStart.length > 0, 'second Custom SOFA import start');
+  const second = background.dispatch({
+    target: 'background', type: 'custom-sofa-import-commit',
+    transferId: secondTransferId, prevalidate: false,
+  }, 'second-document', 2);
+  await new Promise(setImmediate);
+  assert.equal(commitCalls.length, 1, 'the second commit waits while the first asset is being validated');
+
+  releaseValidation();
+  await waitFor(() => first.length === 1 && second.length === 1, 'both Custom SOFA commit replies');
+  assert.equal(commitCalls[1]?.preserveSha256, null, 'the superseded first revision was never selected');
+  assert.equal(background.storageData.hrtfRevision, secondSha, 'the latest import becomes the selected profile');
 });
 
 test('a reclaimed audio document invalidates the old session and requests a fresh start', async () => {

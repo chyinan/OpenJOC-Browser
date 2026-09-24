@@ -20,6 +20,13 @@ function run(): void {
   assert(isMainBridgeMessage({source: 'openjoc-bilibili', type: 'manifest', pageOrigin: 'https://www.bilibili.com', pageUrl: 'https://www.bilibili.com/video/BV1/', mediaKey, candidates: [candidate]}), 'valid main manifest is accepted');
   assert(!isMainBridgeMessage({source: 'openjoc-bilibili', type: 'manifest', pageOrigin: 'https://evil.example', pageUrl: 'https://evil.example/', mediaKey, candidates: [candidate]}), 'wrong main origin is rejected');
   assert(isRuntimeMessage({target: 'background', type: 'toggle'}), 'valid toggle is accepted');
+  const sofaTransferId = '12345678-1234-4123-8123-123456789abc';
+  assert(isRuntimeMessage({target: 'background', type: 'custom-sofa-import-start', transferId: sofaTransferId, byteLength: 4}), 'bounded custom SOFA import can begin');
+  assert(!isRuntimeMessage({target: 'background', type: 'custom-sofa-import-start', transferId: sofaTransferId, byteLength: 0}), 'empty custom SOFA imports are rejected');
+  assert(isRuntimeMessage({target: 'background', type: 'custom-sofa-import-chunk', transferId: sofaTransferId, index: 0, bytesBase64: 'AQIDBA=='}), 'base64 custom SOFA chunks cross the extension boundary');
+  assert(!isRuntimeMessage({target: 'background', type: 'custom-sofa-import-chunk', transferId: sofaTransferId, index: 0, bytesBase64: 'invalid!'}), 'malformed custom SOFA chunks are rejected');
+  assert(isRuntimeMessage({target: 'background', type: 'custom-sofa-import-commit', transferId: sofaTransferId, prevalidate: true}), 'an idle renderer can request SOFA prevalidation before the preference is saved');
+  assert(!isRuntimeMessage({target: 'background', type: 'custom-sofa-import-commit', transferId: sofaTransferId, prevalidate: 'yes'}), 'SOFA prevalidation mode must be a boolean');
   assert(isRuntimeMessage({target: 'background', type: 'session-heartbeat', requestId: 'start-1', pageUrl: 'https://www.bilibili.com/video/BV1/', mediaKey, generation: 1}), 'request-scoped session heartbeat is accepted');
   assert(!isRuntimeMessage({target: 'background', type: 'session-heartbeat', pageUrl: 'https://www.bilibili.com/video/BV1/', mediaKey, generation: 1}), 'a heartbeat without a request identity is rejected');
   assert(isRuntimeMessage({target: 'background', type: 'disable', mediaKey, generation: 1}), 'media-scoped disable is accepted');

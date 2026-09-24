@@ -62,7 +62,7 @@ test('the content-script bundle wires the compiled modules into one classic scri
     compileSources(target);
     const bundle = createContentBundle(target);
 
-    for (const iife of ['__openjocOutputGain', '__openjocOverlayI18n', '__openjocHrtfPresets', '__openjocOverlayState', '__openjocStartHandshake', '__openjocExtensionProtocol', '__openjocOverlayController']) {
+    for (const iife of ['__openjocOutputGain', '__openjocOverlayI18n', '__openjocHrtfPresets', '__openjocCustomSofaTransfer', '__openjocOverlayState', '__openjocStartHandshake', '__openjocExtensionProtocol', '__openjocOverlayController']) {
       assert.ok(bundle.includes(`const ${iife} = (() => {`), `${iife} is defined by the bundle`);
     }
     const controllerStart = bundle.indexOf('const __openjocOverlayController = (() => {');
@@ -73,8 +73,11 @@ test('the content-script bundle wires the compiled modules into one classic scri
     assert.doesNotMatch(controllerIife, /hrtfAvailable/u, 'the HRTF selector has no offline availability text');
     assert.doesNotMatch(controllerIife, /hrtfOfflineHelp/u, 'the HRTF selector does not render an extra helper paragraph');
     assert.ok(bundle.includes('class="field-block hrtf-field-block"'), 'the nested HRTF selector has an explicit alignment scope');
+    assert.ok(bundle.includes('Custom SOFA…'), 'the selector exposes a user-facing Custom SOFA option');
+    assert.ok(bundle.includes('data-field="custom-sofa-file"'), 'the bundle includes the local SOFA file picker');
+    assert.ok(bundle.includes('custom-sofa-import-commit'), 'the selected SOFA is committed to local extension storage before switching');
     assert.ok(bundle.includes('.format-block > .hrtf-field-block { margin-left: -16px; margin-right: -16px; }'), 'the HRTF field cancels the parent inset so its title and select align with output mode');
-    assert.ok(!/\bimport\b|\bexport\b/u.test(bundle), 'the bundle keeps no module syntax for a classic content script');
+    assert.ok(!/^\s*(?:import|export)\s/mu.test(bundle), 'the bundle keeps no module syntax for a classic content script');
     assert.ok(readFileSync(join(target, 'joc-overlay-i18n.js'), 'utf8').length > 0, 'the interface catalogues compile with the rest of the sources');
   } finally {
     rmSync(target, {recursive: true, force: true});

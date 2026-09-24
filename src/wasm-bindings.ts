@@ -1,6 +1,7 @@
 // pattern: Imperative Shell
 
-import {DEFAULT_HRTF_PRESET, type HrtfPreset} from './hrtf-presets.js';
+import {DEFAULT_HRTF_PRESET, type HrtfSelection} from './hrtf-presets.js';
+import {loadCustomSofaAsset} from './custom-sofa-storage.js';
 import {
   fetchHrtfAsset,
   loadHrtfManifest,
@@ -12,7 +13,8 @@ export type WasmDecoderStatus = 0 | 1 | 2 | 3 | -1;
 export type WasmDecoderSnapshot = Readonly<{
   readonly renderer: 'stereo' | 'binaural';
   readonly virtualLayout: '7.1.4' | null;
-  readonly hrtf: HrtfPreset | null;
+  readonly hrtf: HrtfSelection | null;
+  readonly hrtfRevision: string | null;
   readonly latencySamples: number;
   readonly sampleRate: number | null;
   readonly outputChannels: number;
@@ -72,8 +74,10 @@ export type WasmPacketOptions = Readonly<{
 export type WasmDecoderOptions = Readonly<{
   readonly dialnormMode?: 'calibrated' | 'unity';
   readonly renderer?: 'stereo' | 'binaural';
-  readonly hrtf?: HrtfPreset;
+  readonly hrtf?: HrtfSelection;
+  readonly hrtfRevision?: string | null;
   readonly hrtfAsset?: Uint8Array;
+  readonly customSofa?: Uint8Array;
 }>;
 
 export type WasmAssetLoadOptions = Readonly<{
@@ -91,6 +95,8 @@ type WasmExports = Readonly<{
   readonly openjoc_wasm_decoder_create_with_renderer_and_hrtf?: WasmNumberFunction;
   readonly openjoc_wasm_hrtf_asset_alloc?: WasmNumberFunction;
   readonly openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset?: WasmNumberFunction;
+  readonly openjoc_wasm_custom_sofa_alloc?: WasmNumberFunction;
+  readonly openjoc_wasm_decoder_create_with_renderer_and_custom_sofa?: WasmNumberFunction;
   readonly openjoc_wasm_decoder_destroy: WasmNumberFunction;
   readonly openjoc_wasm_decoder_push_bytes: WasmNumberFunction;
   readonly openjoc_wasm_decoder_push_packet: WasmPacketFunction;
@@ -189,6 +195,8 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
     openjoc_wasm_decoder_create_with_renderer_and_hrtf: optionalFunction(raw, 'openjoc_wasm_decoder_create_with_renderer_and_hrtf'),
     openjoc_wasm_hrtf_asset_alloc: optionalFunction(raw, 'openjoc_wasm_hrtf_asset_alloc'),
     openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset: optionalFunction(raw, 'openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset'),
+    openjoc_wasm_custom_sofa_alloc: optionalFunction(raw, 'openjoc_wasm_custom_sofa_alloc'),
+    openjoc_wasm_decoder_create_with_renderer_and_custom_sofa: optionalFunction(raw, 'openjoc_wasm_decoder_create_with_renderer_and_custom_sofa'),
     openjoc_wasm_decoder_destroy: requireFunction(raw, 'openjoc_wasm_decoder_destroy'),
     openjoc_wasm_decoder_push_bytes: requireFunction(raw, 'openjoc_wasm_decoder_push_bytes'),
     openjoc_wasm_decoder_push_packet: requirePacketFunction(raw, 'openjoc_wasm_decoder_push_packet'),
@@ -235,7 +243,8 @@ function createExports(instance: WebAssembly.Instance): WasmExports {
 export class WasmDecoderClient {
   private readonly exports_: WasmExports;
   private readonly handle: number;
-  private readonly hrtfPreset: HrtfPreset;
+  private readonly hrtfPreset: HrtfSelection;
+  private readonly hrtfRevision: string | null;
   private readonly decoderText = new TextDecoder();
   private readonly initialMemoryBytes: number;
   private peakMemoryBytes: number;
@@ -247,10 +256,31 @@ export class WasmDecoderClient {
     const renderer = options.renderer === 'binaural' ? 1 : 0;
     const hrtf = options.hrtf ?? DEFAULT_HRTF_PRESET;
     const hrtfCode = hrtf === 'sadie-ii-d2-kemar' ? 1 : 0;
+    const hrtfRevision = hrtf === 'custom-sofa' ? options.hrtfRevision ?? null : null;
+    if (hrtf === 'custom-sofa' && !isSha256(hrtfRevision)) {
+      throw new Error('Custom SOFA renderer requires a verified asset revision');
+    }
     this.hrtfPreset = hrtf;
+    this.hrtfRevision = hrtfRevision;
     const createWithHrtf = this.exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf;
     const createWithHrtfAsset = this.exports_.openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset;
-    if (renderer === 1 && createWithHrtfAsset !== undefined) {
+    if (renderer === 1 && hrtf === 'custom-sofa') {
+      const sofa = options.customSofa;
+      const allocateSofa = this.exports_.openjoc_wasm_custom_sofa_alloc;
+      const createWithSofa = this.exports_.openjoc_wasm_decoder_create_with_renderer_and_custom_sofa;
+      if (sofa === undefined) throw new Error('no custom SOFA data is available; select a SOFA file first');
+      if (allocateSofa === undefined || createWithSofa === undefined) {
+        throw new Error('selected OpenJOC WASM does not support Custom SOFA');
+      }
+      const pointer = allocateSofa(sofa.length);
+      if (pointer === 0) throw new Error('custom SOFA exceeds the supported size limit');
+      try {
+        this.writeBytes(pointer, sofa);
+        this.handle = createWithSofa(mode, renderer, pointer, sofa.length);
+      } finally {
+        this.exports_.openjoc_wasm_dealloc(pointer, sofa.length);
+      }
+    } else if (renderer === 1 && createWithHrtfAsset !== undefined) {
       const asset = options.hrtfAsset;
       const allocate = this.exports_.openjoc_wasm_hrtf_asset_alloc;
       if (asset === undefined || allocate === undefined) {
@@ -264,7 +294,7 @@ export class WasmDecoderClient {
       } finally {
         this.exports_.openjoc_wasm_dealloc(pointer, asset.length);
       }
-    } else if (options.hrtfAsset !== undefined) {
+    } else if (options.hrtfAsset !== undefined || options.customSofa !== undefined) {
       throw new Error('this OpenJOC WASM bridge does not support external HRTF assets');
     } else if (createWithHrtf === undefined && hrtf !== DEFAULT_HRTF_PRESET) {
       throw new Error('selected built-in HRTF requires an updated OpenJOC WASM bridge');
@@ -274,6 +304,9 @@ export class WasmDecoderClient {
         : createWithHrtf(mode, renderer, hrtfCode);
     }
     if (this.handle === 0) {
+      if (renderer === 1 && hrtf === 'custom-sofa') {
+        throw new Error('failed to initialize Custom SOFA; use a compatible 48 kHz NetCDF CDF-1 SimpleFreeFieldHRIR dataset with 7.1.4 direction coverage');
+      }
       throw new Error('failed to create OpenJOC WASM decoder');
     }
     this.initialMemoryBytes = this.exports_.memory.buffer.byteLength;
@@ -371,6 +404,7 @@ export class WasmDecoderClient {
       renderer: renderer === 1 ? 'binaural' : 'stereo',
       virtualLayout: renderer === 1 ? '7.1.4' : null,
       hrtf: renderer === 1 ? (this.hrtfPreset ?? DEFAULT_HRTF_PRESET) : null,
+      hrtfRevision: renderer === 1 ? this.hrtfRevision : null,
       latencySamples: this.exports_.openjoc_wasm_decoder_latency_samples(this.handle),
       sampleRate: this.optionalSampleRate(this.exports_.openjoc_wasm_decoder_sample_rate(this.handle)),
       outputChannels: this.exports_.openjoc_wasm_decoder_channel_count(this.handle),
@@ -496,6 +530,11 @@ export function supportsExternalHrtfAssetAbi(instance: WebAssembly.Instance): bo
   return typeof instance.exports.openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset === 'function';
 }
 
+export function supportsCustomSofaAbi(instance: WebAssembly.Instance): boolean {
+  return typeof instance.exports.openjoc_wasm_custom_sofa_alloc === 'function'
+    && typeof instance.exports.openjoc_wasm_decoder_create_with_renderer_and_custom_sofa === 'function';
+}
+
 export async function loadOpenJocWasm(
   url: URL,
   options: WasmDecoderOptions = {},
@@ -519,7 +558,19 @@ export async function loadOpenJocWasm(
   // Embedded-resource WASM versions can keep using their own preset storage.
   const supportsExternalAssets = supportsExternalHrtfAssetAbi(instantiated.instance);
   let hrtfAsset: Uint8Array | undefined;
-  if (renderer === 'binaural' && supportsExternalAssets) {
+  let customSofa: Uint8Array | undefined;
+  if (renderer === 'binaural' && hrtf === 'custom-sofa') {
+    if (!supportsCustomSofaAbi(instantiated.instance)) throw new Error('selected OpenJOC WASM does not support Custom SOFA');
+    loadOptions.onHrtfLoadStage?.('verifying');
+    const asset = await loadCustomSofaAsset(options.hrtfRevision ?? null);
+    if (asset === null) throw new Error('no custom SOFA data is stored; import a SOFA file first');
+    if (!isSha256(options.hrtfRevision) || asset.sha256 !== options.hrtfRevision) {
+      throw new Error('the selected Custom SOFA changed before renderer initialization');
+    }
+    customSofa = asset.bytes;
+    loadOptions.onHrtfLoadStage?.('preparing');
+  } else if (renderer === 'binaural' && supportsExternalAssets) {
+    if (hrtf === 'custom-sofa') throw new Error('Custom SOFA did not enter its dedicated load path');
     const manifest = await loadHrtfManifest({wasmUrl: url, fetcher: workerFetch, signal});
     const descriptor = manifest.assets[hrtf];
     hrtfAsset = await fetchHrtfAsset({
@@ -530,5 +581,9 @@ export async function loadOpenJocWasm(
       onStage: loadOptions.onHrtfLoadStage,
     });
   }
-  return new WasmDecoderClient(instantiated.instance, {...options, hrtfAsset});
+  return new WasmDecoderClient(instantiated.instance, {...options, hrtfAsset, customSofa});
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 }

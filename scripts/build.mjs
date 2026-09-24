@@ -89,8 +89,10 @@ function assertExternalHrtfAssetSupport(sourceRoot) {
   const wasmCargo = readFileSync(join(sourceRoot, 'crates', 'openjoc-wasm', 'Cargo.toml'), 'utf8');
   const wasmFfi = readFileSync(join(sourceRoot, 'crates', 'openjoc-wasm', 'src', 'ffi.rs'), 'utf8');
   if (!/^\s*external-builtin-hrtf-assets\s*=/m.test(wasmCargo)
-    || !wasmFfi.includes('openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset')) {
-    throw new Error('resolved OpenJOC source lacks the external HRTF asset ABI; set OPENJOC_ROOT or OPENJOC_SOURCE_PIN to a compatible commit');
+    || !wasmFfi.includes('openjoc_wasm_decoder_create_with_renderer_and_hrtf_asset')
+    || !wasmFfi.includes('openjoc_wasm_custom_sofa_alloc')
+    || !wasmFfi.includes('openjoc_wasm_decoder_create_with_renderer_and_custom_sofa')) {
+    throw new Error('resolved OpenJOC source lacks the built-in asset or Custom SOFA WASM ABI; set OPENJOC_ROOT or OPENJOC_SOURCE_PIN to a compatible commit');
   }
 }
 

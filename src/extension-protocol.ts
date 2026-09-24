@@ -1,6 +1,7 @@
 // pattern: Functional Core
 
-import {isHrtfPreset, type HrtfPreset} from './hrtf-presets.js';
+import {isHrtfSelection, type HrtfSelection} from './hrtf-presets.js';
+import {isValidCustomSofaBase64, MAX_CUSTOM_SOFA_BYTES} from './custom-sofa-transfer.js';
 
 import {isOutputGainDb} from './output-gain.js';
 
@@ -32,7 +33,8 @@ export type PlaybackMetrics = Readonly<{
   readonly stage: string;
   readonly renderer: RendererMode;
   readonly virtualLayout: '7.1.4' | null;
-  readonly hrtf: HrtfPreset | null;
+  readonly hrtf: HrtfSelection | null;
+  readonly hrtfRevision?: string | null;
   readonly binauralLatencyMs: number | null;
   readonly binauralP95Ms: number | null;
   readonly binauralMaxMs: number | null;
@@ -72,9 +74,14 @@ export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'document-active'}>
   | Readonly<{target: 'background'; type: 'request-session'; force?: boolean; requestId?: string; generation?: number}>
   | Readonly<{target: 'background'; type: 'request-manifest'; pageUrl: string}>
+  | Readonly<{target: 'background'; type: 'custom-sofa-query'; revision?: string | null}>
+  | Readonly<{target: 'background'; type: 'custom-sofa-import-start'; transferId: string; byteLength: number; preserveSha256?: string | null}>
+  | Readonly<{target: 'background'; type: 'custom-sofa-import-chunk'; transferId: string; index: number; bytesBase64: string}>
+  | Readonly<{target: 'background'; type: 'custom-sofa-import-commit'; transferId: string; prevalidate?: boolean}>
+  | Readonly<{target: 'background'; type: 'custom-sofa-import-abort'; transferId: string}>
   | Readonly<{target: 'background'; type: 'page-media-range-request'; tabId: number; generation: number; requestId: string; url: string; start: number; end: number}>
   | Readonly<{target: 'background'; type: 'page-media-range-response'; tabId: number; generation: number; requestId: string; status: number; contentRange: string | null; error: string | null; bufferBase64: string}>
-  | Readonly<{target: 'background'; type: 'start'; requestId: string; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; paused?: boolean; buffering?: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfPreset; gainDb?: number}>
+  | Readonly<{target: 'background'; type: 'start'; requestId: string; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number; videoTimeSamples: number; paused?: boolean; buffering?: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfSelection; hrtfRevision?: string | null; gainDb?: number}>
   | Readonly<{target: 'background'; type: 'manifest'; pageUrl: string; mediaKey: MediaKey; candidates: ReadonlyArray<BilibiliAudioCandidate>; generation: number}>
   | Readonly<{target: 'background'; type: 'session-heartbeat'; requestId: string; pageUrl: string; mediaKey: MediaKey; generation: number}>
   | Readonly<{target: 'background'; type: 'video-clock'; requestId: string; pageUrl: string; mediaKey: MediaKey; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
@@ -84,7 +91,7 @@ export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'disable'; mediaKey: MediaKey; generation: number}>
   | Readonly<{target: 'background'; type: 'dialnorm'; generation: number; mode: 'calibrated' | 'unity'}>
   | Readonly<{target: 'background'; type: 'output-gain'; requestId: string; generation: number; gainDb: number}>
-  | Readonly<{target: 'offscreen'; type: 'start'; requestId: string; tabId: number; pageUrl: string; mediaKey: MediaKey; candidate: BilibiliAudioCandidate; generation: number; videoTimeSamples: number; paused: boolean; buffering: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfPreset; gainDb?: number}>
+  | Readonly<{target: 'offscreen'; type: 'start'; requestId: string; tabId: number; pageUrl: string; mediaKey: MediaKey; candidate: BilibiliAudioCandidate; generation: number; videoTimeSamples: number; paused: boolean; buffering: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfSelection; hrtfRevision?: string | null; gainDb?: number}>
   | Readonly<{target: 'offscreen'; type: 'output-gain'; requestId: string; tabId: number; generation: number; gainDb: number}>
   | Readonly<{target: 'offscreen'; type: 'clock'; tabId: number; generation: number; mediaTimeSamples: number; paused: boolean; buffering: boolean; playbackRate: number; expectedDisplayTimeMs: number | null}>
   | Readonly<{target: 'offscreen'; type: 'native-muted'; tabId: number; generation: number}>
@@ -126,6 +133,23 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
       && (value.generation === undefined || isGeneration(value.generation));
   }
   if (value.target === 'background' && value.type === 'request-manifest') return typeof value.pageUrl === 'string';
+  if (value.target === 'background' && value.type === 'custom-sofa-query') {
+    return value.revision === undefined || value.revision === null || isSha256(value.revision);
+  }
+  if (value.target === 'background' && value.type === 'custom-sofa-import-start') {
+    return isTransferId(value.transferId)
+      && isPositiveInteger(value.byteLength)
+      && value.byteLength <= MAX_CUSTOM_SOFA_BYTES
+      && (value.preserveSha256 === undefined || value.preserveSha256 === null || isSha256(value.preserveSha256));
+  }
+  if (value.target === 'background' && value.type === 'custom-sofa-import-chunk') {
+    return isTransferId(value.transferId) && isGeneration(value.index) && isValidCustomSofaBase64(value.bytesBase64);
+  }
+  if ((value.target === 'background' && value.type === 'custom-sofa-import-commit')
+    || (value.target === 'background' && value.type === 'custom-sofa-import-abort')) {
+    return isTransferId(value.transferId)
+      && (value.type !== 'custom-sofa-import-commit' || value.prevalidate === undefined || typeof value.prevalidate === 'boolean');
+  }
   if (value.target === 'background' && value.type === 'page-media-range-request') {
     return isTabId(value.tabId) && isGeneration(value.generation) && isNonEmptyString(value.requestId)
       && isNonEmptyString(value.url) && isNonNegativeFinite(value.start) && isNonNegativeFinite(value.end)
@@ -143,7 +167,8 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
       && (value.paused === undefined || typeof value.paused === 'boolean')
       && (value.buffering === undefined || typeof value.buffering === 'boolean')
       && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity') && isRendererMode(value.renderer)
-      && (value.hrtf === undefined || isHrtfPreset(value.hrtf))
+      && (value.hrtf === undefined || isHrtfSelection(value.hrtf))
+      && isValidHrtfRevisionForSelection(value.hrtf, value.hrtfRevision)
       && (value.gainDb === undefined || isOutputGainDb(value.gainDb));
   }
   if (value.target === 'background' && value.type === 'manifest') {
@@ -177,7 +202,8 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
       && isNonNegativeFinite(value.videoTimeSamples)
       && typeof value.paused === 'boolean' && typeof value.buffering === 'boolean'
       && (value.dialnorm === 'calibrated' || value.dialnorm === 'unity') && isRendererMode(value.renderer)
-      && (value.hrtf === undefined || isHrtfPreset(value.hrtf))
+      && (value.hrtf === undefined || isHrtfSelection(value.hrtf))
+      && isValidHrtfRevisionForSelection(value.hrtf, value.hrtfRevision)
       && (value.gainDb === undefined || isOutputGainDb(value.gainDb));
   }
   if (value.target === 'offscreen' && value.type === 'clock') {
@@ -235,7 +261,9 @@ function isPlaybackMetrics(value: unknown): value is PlaybackMetrics {
   return isNonEmptyString(value.stage)
     && isRendererMode(value.renderer)
     && (value.virtualLayout === null || value.virtualLayout === '7.1.4')
-    && (value.hrtf === null || isHrtfPreset(value.hrtf))
+    && (value.hrtf === null || isHrtfSelection(value.hrtf))
+    && (value.hrtfRevision === undefined || value.hrtfRevision === null || isSha256(value.hrtfRevision))
+    && (value.hrtf !== 'custom-sofa' || isSha256(value.hrtfRevision))
     && isNullableFiniteNumber(value.binauralLatencyMs)
     && isNullableFiniteNumber(value.binauralP95Ms)
     && isNullableFiniteNumber(value.binauralMaxMs)
@@ -282,6 +310,24 @@ function isRendererMode(value: unknown): value is RendererMode {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
+
+function isTransferId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function isValidHrtfRevisionForSelection(selection: unknown, revision: unknown): boolean {
+  if (selection === 'custom-sofa') return isSha256(revision);
+  return revision === undefined || revision === null;
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;

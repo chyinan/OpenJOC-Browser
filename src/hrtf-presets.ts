@@ -2,14 +2,31 @@
 
 export type HrtfPreset = 'sadie-ii-d1-ku100' | 'sadie-ii-d2-kemar';
 
+export type HrtfSelection = HrtfPreset | 'custom-sofa';
+
 export type HrtfPresetOption = Readonly<{
   readonly id: HrtfPreset;
   readonly label: string;
 }>;
 
+export type HrtfSelectionOption = Readonly<{
+  readonly id: HrtfSelection;
+  readonly label: string;
+}>;
+
+export const HRTF_IMPORT_OPTION = {
+  id: 'choose-custom-sofa',
+  label: 'Custom SOFA…',
+} as const;
+
 export const HRTF_PRESET_OPTIONS: ReadonlyArray<HrtfPresetOption> = [
   {id: 'sadie-ii-d1-ku100', label: 'SADIE II — KU100'},
   {id: 'sadie-ii-d2-kemar', label: 'SADIE II — KEMAR'},
+];
+
+export const HRTF_SELECTION_OPTIONS: ReadonlyArray<HrtfSelectionOption> = [
+  ...HRTF_PRESET_OPTIONS,
+  {id: 'custom-sofa', label: 'Custom SOFA'},
 ];
 
 export const DEFAULT_HRTF_PRESET: HrtfPreset = 'sadie-ii-d1-ku100';
@@ -48,6 +65,31 @@ export function normalizeHrtfPreset(value: unknown): HrtfPreset {
   return isHrtfPreset(value) ? value : DEFAULT_HRTF_PRESET;
 }
 
+export function isHrtfSelection(value: unknown): value is HrtfSelection {
+  return HRTF_SELECTION_OPTIONS.some((option) => option.id === value);
+}
+
+export function normalizeHrtfSelection(value: unknown): HrtfSelection {
+  return isHrtfSelection(value) ? value : DEFAULT_HRTF_PRESET;
+}
+
 export function hrtfPresetLabel(value: HrtfPreset): string {
   return HRTF_PRESET_OPTIONS.find((option) => option.id === value)?.label ?? 'SADIE II — KU100';
+}
+
+export function hrtfSelectionLabel(value: HrtfSelection): string {
+  return HRTF_SELECTION_OPTIONS.find((option) => option.id === value)?.label ?? 'SADIE II — KU100';
+}
+
+export function hrtfRendererCacheKey(selection: HrtfSelection, revision: string | null): string {
+  return selection === 'custom-sofa' ? `${selection}:${revision ?? 'missing'}` : selection;
+}
+
+export function resolveCustomSofaRevision(activeRevision: unknown, lastRevision: unknown): string | null {
+  if (isSha256Revision(activeRevision)) return activeRevision;
+  return isSha256Revision(lastRevision) ? lastRevision : null;
+}
+
+function isSha256Revision(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 }

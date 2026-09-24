@@ -20,9 +20,9 @@ Under **节目电平**, the current options are:
 - **Calibrated**: respects programme Dialnorm according to OpenJOC semantics.
 - **Unity / 兼容模式**: disables Dialnorm attenuation. This is not a volume boost.
 
-Binaural uses a fixed virtual 7.1.4 layout. The selector offers **SADIE II — KU100** (Default / Reference) and **SADIE II — KEMAR**. Different listeners may prefer different non-individual HRTFs because perception depends strongly on individual anatomy; no profile is best for everyone.
+Binaural uses a fixed virtual 7.1.4 layout. The selector offers **SADIE II — KU100** (Default / Reference), **SADIE II — KEMAR**, and **Custom SOFA…** at the bottom. Different listeners may prefer different non-individual HRTFs because perception depends strongly on individual anatomy; no profile is best for everyone.
 
-The extension package includes D1 and D2, and both work offline immediately after installation. Selecting a profile loads its packaged asset and verifies its size and SHA-256 before renderer preparation; no HRTF download is required. This Browser extension does not expose Custom SOFA import, head tracking, or virtual 9.1.6.
+The extension package includes D1 and D2, and both work offline immediately after installation. Selecting a built-in profile loads its packaged asset and verifies its size and SHA-256 before renderer preparation; no HRTF download is required. Custom SOFA opens a local file picker. The supported input is OpenJOC's strict NetCDF CDF-1 `SimpleFreeFieldHRIR` SOFA at 48 kHz, up to 16 MiB. Browser WASM also limits the expanded HRIR bank to one million coefficients and rejects excessive measurement counts, FIR lengths, and delays even when the file itself is below 16 MiB. The extension verifies and stores imported bytes by SHA-256 in local IndexedDB for later sessions; the file is not uploaded. Head tracking and virtual 9.1.6 are not exposed.
 
 ## Custom output gain
 

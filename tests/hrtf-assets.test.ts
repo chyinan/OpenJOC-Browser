@@ -1,6 +1,6 @@
 // pattern: Imperative Shell
 
-import {DEFAULT_HRTF_PRESET, HRTF_ASSET_VERSION, HRTF_PRESET_OPTIONS, isHrtfPreset, normalizeHrtfPreset, type HrtfPreset, hrtfAssetMetadata} from '../src/hrtf-presets.js';
+import {DEFAULT_HRTF_PRESET, HRTF_ASSET_VERSION, HRTF_PRESET_OPTIONS, isHrtfPreset, normalizeHrtfPreset, resolveCustomSofaRevision, type HrtfPreset, hrtfAssetMetadata} from '../src/hrtf-presets.js';
 import {DecoderGenerationSlot} from '../src/decoder-generation.js';
 import {
   clearRetiredHrtfAssetCache,
@@ -128,6 +128,9 @@ async function run(): Promise<void> {
   assert(HRTF_PRESET_OPTIONS.map((option) => option.id).join(',') === 'sadie-ii-d1-ku100,sadie-ii-d2-kemar', 'only D1 and D2 remain built-in presets');
   assert(!isHrtfPreset('aachen-high-resolution-kemar'), 'Aachen is no longer a selectable built-in preset');
   assert(normalizeHrtfPreset('aachen-high-resolution-kemar') === DEFAULT_HRTF_PRESET, 'a saved Aachen selection migrates safely to default D1');
+  assert(resolveCustomSofaRevision('a'.repeat(64), 'b'.repeat(64)) === 'a'.repeat(64), 'an active Custom SOFA revision takes precedence');
+  assert(resolveCustomSofaRevision(null, 'b'.repeat(64)) === 'b'.repeat(64), 'the last cached Custom SOFA remains selectable after switching to a built-in preset');
+  assert(resolveCustomSofaRevision('invalid', null) === null, 'invalid or missing Custom SOFA revisions fail closed');
 
   const packagedFetch: typeof fetch = async (input): Promise<Response> => {
     const url = new URL(String(input));

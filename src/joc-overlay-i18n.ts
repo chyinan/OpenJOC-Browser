@@ -43,6 +43,8 @@ export type OverlayMessageKey =
   | 'statusPreparing'
   | 'hrtfVerifying'
   | 'hrtfPreparing'
+  | 'hrtfImporting'
+  | 'hrtfImportFailed'
   | 'hrtfFallback'
   | 'statusReady'
   | 'statusPaused'
@@ -147,6 +149,8 @@ const ZH_CN_MESSAGES: OverlayMessages = {
   statusPreparing: '准备中',
   hrtfVerifying: '正在校验…',
   hrtfPreparing: '正在准备双耳渲染器…',
+  hrtfImporting: '正在导入自定义 SOFA…',
+  hrtfImportFailed: 'SOFA 导入失败；请使用不超过 16 MiB、采样率为 48 kHz 的 SimpleFreeFieldHRIR 文件。',
   hrtfFallback: 'HRTF 加载失败，已恢复之前的配置。',
   statusReady: '已启用 · 等待音频',
   statusPaused: '已启用 · 已暂停',
@@ -250,6 +254,8 @@ const EN_MESSAGES: OverlayMessages = {
   statusPreparing: 'Preparing',
   hrtfVerifying: 'Verifying…',
   hrtfPreparing: 'Preparing binaural renderer…',
+  hrtfImporting: 'Importing Custom SOFA…',
+  hrtfImportFailed: 'SOFA import failed; choose a supported 48 kHz SimpleFreeFieldHRIR file no larger than 16 MiB.',
   hrtfFallback: 'HRTF load failed; restored the previous profile.',
   statusReady: 'Enabled · Waiting for audio',
   statusPaused: 'Enabled · Paused',
@@ -353,6 +359,8 @@ const JA_MESSAGES: OverlayMessages = {
   statusPreparing: '準備中',
   hrtfVerifying: '検証中…',
   hrtfPreparing: 'バイノーラルレンダラーを準備中…',
+  hrtfImporting: 'カスタム SOFA を読み込み中…',
+  hrtfImportFailed: 'SOFA を読み込めません。16 MiB 以下、48 kHz の SimpleFreeFieldHRIR ファイルを選択してください。',
   hrtfFallback: 'HRTF を読み込めなかったため、以前のプロファイルに戻しました。',
   statusReady: '有効 · オーディオを待機中',
   statusPaused: '有効 · 一時停止',

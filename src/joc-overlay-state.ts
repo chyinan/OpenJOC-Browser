@@ -2,7 +2,7 @@
 
 import {DEFAULT_OVERLAY_LANGUAGE, normalizeOverlayLanguage, type OverlayLanguage} from './joc-overlay-i18n.js';
 import {normalizeOutputGainDb} from './output-gain.js';
-import {DEFAULT_HRTF_PRESET, type HrtfPreset} from './hrtf-presets.js';
+import {DEFAULT_HRTF_PRESET, type HrtfSelection} from './hrtf-presets.js';
 
 export type OverlayMode = 'hidden' | 'detected' | 'active' | 'collapsed' | 'diagnostics' | 'raw' | 'error' | 'nonjoc';
 
@@ -24,7 +24,7 @@ export const OVERLAY_RENDERER_OPTIONS: ReadonlyArray<OverlayRendererOption> = [
 export type OverlayState = Readonly<{
   readonly mode: OverlayMode;
   readonly renderer: OverlayRenderer;
-  readonly hrtf: HrtfPreset;
+  readonly hrtf: HrtfSelection;
   readonly dialnorm: DialnormMode;
   readonly gainDb: number;
   readonly alwaysEnabled: boolean;
@@ -51,7 +51,7 @@ export type OverlayEvent =
   | Readonly<{readonly type: 'dismiss-detection'}>
   | Readonly<{readonly type: 'close-nonjoc'}>
   | Readonly<{readonly type: 'set-renderer'; readonly renderer: OverlayRenderer}>
-  | Readonly<{readonly type: 'set-hrtf'; readonly hrtf: HrtfPreset}>
+  | Readonly<{readonly type: 'set-hrtf'; readonly hrtf: HrtfSelection}>
   | Readonly<{readonly type: 'set-dialnorm'; readonly mode: DialnormMode}>
   | Readonly<{readonly type: 'set-gain'; readonly gainDb: number}>
   | Readonly<{readonly type: 'set-language'; readonly language: OverlayLanguage}>

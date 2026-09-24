@@ -4,7 +4,7 @@ import {type PlaybackMetrics, type PlaybackPhase} from './extension-protocol.js'
 import {OVERLAY_LANGUAGE_OPTIONS, isOverlayLanguage, normalizeOverlayLanguage, overlayMessage, type OverlayLanguage, type OverlayMessageKey} from './joc-overlay-i18n.js';
 import {advanceOverlayState, createOverlayState, needsOverlayMarkupRebuild, resetOverlayState, OVERLAY_RENDERER_OPTIONS, type DialnormMode, type OverlayRenderer, type OverlayState} from './joc-overlay-state.js';
 import {normalizeOutputGainDb, OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB, OUTPUT_GAIN_STEP_DB} from './output-gain.js';
-import {HRTF_PRESET_OPTIONS, hrtfPresetLabel, normalizeHrtfPreset, type HrtfPreset} from './hrtf-presets.js';
+import {HRTF_IMPORT_OPTION, HRTF_SELECTION_OPTIONS, hrtfSelectionLabel, normalizeHrtfSelection, type HrtfSelection} from './hrtf-presets.js';
 
 type OverlayStatus = Readonly<{
   readonly phase: PlaybackPhase;
@@ -16,7 +16,7 @@ type OverlayStatus = Readonly<{
 
 type OverlayEnableOptions = Readonly<{
   readonly renderer: OverlayRenderer;
-  readonly hrtf: HrtfPreset;
+  readonly hrtf: HrtfSelection;
   readonly dialnorm: DialnormMode;
 }>;
 
@@ -27,7 +27,8 @@ type JocOverlayCallbacks = Readonly<{
   readonly onEnable: (options: OverlayEnableOptions) => void;
   readonly onDisable: () => void;
   readonly onRendererChange: (renderer: OverlayRenderer) => void;
-  readonly onHrtfChange: (hrtf: HrtfPreset) => void;
+  readonly onHrtfChange: (hrtf: HrtfSelection) => void;
+  readonly onCustomSofaSelected: (file: File) => void;
   readonly onDialnormChange: (mode: DialnormMode) => void;
   readonly onAlwaysEnabledChange: (enabled: boolean) => void;
   readonly onGainChange: (gainDb: number) => void;
@@ -40,7 +41,8 @@ export type JocOverlayController = Readonly<{
   readonly setAlwaysEnabled: (enabled: boolean) => void;
   readonly setDialnorm: (mode: DialnormMode) => void;
   readonly setRenderer: (renderer: OverlayRenderer) => void;
-  readonly setHrtf: (hrtf: HrtfPreset) => void;
+  readonly setHrtf: (hrtf: HrtfSelection) => void;
+  readonly setHrtfLoadState: (state: 'importing' | 'failed' | null) => void;
   readonly setGainDb: (gainDb: number) => void;
   readonly setLanguage: (language: OverlayLanguage) => void;
   readonly setDebugSummary: (summary: string) => void;
@@ -71,6 +73,7 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
 
   let state: OverlayState = createOverlayState();
   let status: OverlayStatus | null = null;
+  let hrtfLoadState: 'importing' | 'failed' | null = null;
   let copyStatusTimer: number | null = null;
 
   function t(key: OverlayMessageKey): string {
@@ -103,7 +106,7 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
     panelBody.dataset.mode = state.mode;
     panelBody.classList.toggle('detected', state.mode === 'detected');
     applyPanelLabel();
-    panelBody.innerHTML = renderMode(state, status);
+    panelBody.innerHTML = renderMode(state, status, hrtfLoadState);
     updateDebugState();
   }
 
@@ -214,6 +217,16 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
 
   function handleChange(event: Event): void {
     const target = event.target;
+    if (target instanceof HTMLInputElement && target.dataset.field === 'custom-sofa-file') {
+      const file = target.files?.[0] ?? null;
+      target.value = '';
+      if (file !== null) {
+        hrtfLoadState = 'importing';
+        render();
+        callbacks.onCustomSofaSelected(file);
+      }
+      return;
+    }
     if (target instanceof HTMLInputElement && target.dataset.field === 'output-gain') {
       if (Number.isFinite(target.valueAsNumber)) changeGain(target.valueAsNumber, null);
       else updateGainControls(null);
@@ -233,7 +246,12 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
       return;
     }
     if (target.dataset.field === 'hrtf') {
-      const hrtf = normalizeHrtfPreset(target.value);
+      if (target.value === HRTF_IMPORT_OPTION.id) {
+        target.value = state.hrtf;
+        panelBody.querySelector<HTMLInputElement>('input[data-field="custom-sofa-file"]')?.click();
+        return;
+      }
+      const hrtf = normalizeHrtfSelection(target.value);
       transition({type: 'set-hrtf', hrtf});
       callbacks.onHrtfChange(hrtf);
       return;
@@ -334,9 +352,13 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
       if (state.renderer === renderer) return;
       transition({type: 'set-renderer', renderer});
     },
-    setHrtf(hrtf: HrtfPreset): void {
+    setHrtf(hrtf: HrtfSelection): void {
       if (state.hrtf === hrtf) return;
       transition({type: 'set-hrtf', hrtf});
+    },
+    setHrtfLoadState(nextState: 'importing' | 'failed' | null): void {
+      hrtfLoadState = nextState;
+      render();
     },
     setGainDb(gainDb: number): void {
       if (state.gainDb === gainDb) return;
@@ -381,7 +403,7 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
   };
 }
 
-function renderMode(state: OverlayState, status: OverlayStatus | null): string {
+function renderMode(state: OverlayState, status: OverlayStatus | null, hrtfLoadState: 'importing' | 'failed' | null): string {
   const t: OverlayTranslate = (key): string => overlayMessage(state.language, key);
   switch (state.mode) {
     case 'detected':
@@ -389,15 +411,15 @@ function renderMode(state: OverlayState, status: OverlayStatus | null): string {
     case 'collapsed':
       return renderCollapsed(state, t);
     case 'diagnostics':
-      return renderExpanded(state, status, true, false, t);
+      return renderExpanded(state, status, true, false, t, hrtfLoadState);
     case 'raw':
-      return renderExpanded(state, status, true, true, t);
+      return renderExpanded(state, status, true, true, t, hrtfLoadState);
     case 'error':
       return renderError(status, state.errorDetailsOpen, t);
     case 'nonjoc':
       return renderNonJoc(t);
     case 'active':
-      return renderExpanded(state, status, false, false, t);
+      return renderExpanded(state, status, false, false, t, hrtfLoadState);
     case 'hidden':
       return '';
   }
@@ -425,22 +447,26 @@ function renderCollapsed(state: OverlayState, t: OverlayTranslate): string {
   </section>`;
 }
 
-function renderExpanded(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean, t: OverlayTranslate): string {
+function renderExpanded(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean, t: OverlayTranslate, hrtfLoadState: 'importing' | 'failed' | null): string {
   const statusLabel = includeDiagnostics ? t('statusEnabledDiagnostics') : playbackStatusLabel(status, t);
   return `<section class="shell expanded-panel" data-state="${includeDiagnostics ? 'diagnostics' : 'active'}">
     <header class="panel-header">
       <div class="brandline"><span class="status-dot active" aria-hidden="true"></span><div class="status-stack"><strong>OpenJOC</strong><span data-live="status-label">${escapeHtml(statusLabel)}</span></div></div>
       <button class="icon-button" type="button" aria-label="${escapeHtml(t('collapsePanel'))}" data-action="collapse">${icon('collapse')}</button>
     </header>
-    ${renderNormalBody(state, status, includeDiagnostics, includeRaw, t)}
+    ${renderNormalBody(state, status, includeDiagnostics, includeRaw, t, hrtfLoadState)}
   </section>`;
 }
 
-function renderNormalBody(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean, t: OverlayTranslate): string {
+function renderNormalBody(state: OverlayState, status: OverlayStatus | null, includeDiagnostics: boolean, includeRaw: boolean, t: OverlayTranslate, hrtfLoadState: 'importing' | 'failed' | null): string {
   const rendererOptions = OVERLAY_RENDERER_OPTIONS.map((option) => `<option value="${option.renderer}"${option.renderer === state.renderer ? ' selected' : ''}${option.enabled ? '' : ' disabled'}>${escapeHtml(rendererLabel(option.renderer, t))}</option>`).join('');
-  const hrtfOptions = HRTF_PRESET_OPTIONS.map((option) => `<option value="${option.id}"${option.id === state.hrtf ? ' selected' : ''}>${escapeHtml(option.label)}</option>`).join('');
+  const hrtfOptions = HRTF_SELECTION_OPTIONS
+    .filter((option) => option.id !== 'custom-sofa' || state.hrtf === 'custom-sofa')
+    .map((option) => `<option value="${option.id}"${option.id === state.hrtf ? ' selected' : ''}>${escapeHtml(option.label)}</option>`)
+    .concat(`<option value="${HRTF_IMPORT_OPTION.id}">${escapeHtml(HRTF_IMPORT_OPTION.label)}</option>`)
+    .join('');
   const hrtfControl = state.renderer === 'binaural-headphones'
-    ? `<div class="field-block hrtf-field-block"><label class="field-label" for="openjoc-hrtf">HRTF</label><select id="openjoc-hrtf" class="select" data-field="hrtf" aria-label="HRTF">${hrtfOptions}</select></div>`
+    ? `<div class="field-block hrtf-field-block"><label class="field-label" for="openjoc-hrtf">HRTF</label><select id="openjoc-hrtf" class="select" data-field="hrtf" aria-label="HRTF"${hrtfLoadState === 'importing' ? ' disabled' : ''}>${hrtfOptions}</select><input class="custom-sofa-file" type="file" accept=".sofa,application/octet-stream" data-field="custom-sofa-file" aria-label="Custom SOFA file" hidden><p class="field-help hrtf-load-status" aria-live="polite">${hrtfLoadState === 'importing' ? escapeHtml(t('hrtfImporting')) : hrtfLoadState === 'failed' ? escapeHtml(t('hrtfImportFailed')) : ''}</p></div>`
     : '';
   const metrics = status?.metrics ?? null;
   const raw = includeRaw ? `<div class="raw-panel"><div class="raw-heading"><strong>${escapeHtml(t('rawDiagnosticsJson'))}</strong><button class="text-button" type="button" data-action="copy-json">${escapeHtml(t('copyJson'))}</button></div><pre class="raw-json">${escapeHtml(diagnosticsJson(state, status))}</pre></div>` : `<button class="secondary-trigger" type="button" data-action="open-raw" aria-expanded="false"><span>${escapeHtml(t('rawDiagnosticsJson'))}</span><span class="trigger-chevron">›</span></button>`;
@@ -490,7 +516,7 @@ function renderDiagnostics(state: OverlayState, status: OverlayStatus | null, ra
 function renderBinauralDiagnostics(state: OverlayState, metrics: PlaybackMetrics | null, t: OverlayTranslate): string {
   return renderDiagGroup('binaural', [
     {label: t('diagVirtualLayout'), value: metrics?.virtualLayout ?? t('defaultVirtualLayout'), liveKey: null},
-    {label: t('diagHrtf'), value: metrics?.hrtf === null || metrics === null ? hrtfPresetLabel(state.hrtf) : hrtfPresetLabel(metrics.hrtf), liveKey: null},
+    {label: t('diagHrtf'), value: metrics?.hrtf === null || metrics === null ? hrtfSelectionLabel(state.hrtf) : hrtfSelectionLabel(metrics.hrtf), liveKey: null},
     {label: t('diagBinauralLatency'), value: metrics?.binauralLatencyMs === null || metrics === null ? '—' : `${formatNumber(metrics.binauralLatencyMs, 2)} ms`, liveKey: 'diag-binaural-latency'},
     {label: t('diagBinauralP95'), value: metrics?.binauralP95Ms === null || metrics === null ? '—' : `${formatNumber(metrics.binauralP95Ms, 2)} ms`, liveKey: 'diag-binaural-p95'},
   ], t);

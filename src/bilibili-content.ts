@@ -1,11 +1,12 @@
 // pattern: Imperative Shell
 
 import {createJocOverlayController, type JocOverlayController} from './joc-overlay-controller.js';
-import {isRuntimeMessage, type PlaybackMetrics, type PlaybackPhase, type RendererMode} from './extension-protocol.js';
+import {isRuntimeMessage, type PlaybackMetrics, type PlaybackPhase, type RendererMode, type RuntimeMessage} from './extension-protocol.js';
 import {normalizeOverlayLanguage, type OverlayLanguage} from './joc-overlay-i18n.js';
 import {type DialnormMode, type OverlayRenderer} from './joc-overlay-state.js';
 import {normalizeOutputGainDb} from './output-gain.js';
-import {DEFAULT_HRTF_PRESET, normalizeHrtfPreset, type HrtfPreset} from './hrtf-presets.js';
+import {DEFAULT_HRTF_PRESET, normalizeHrtfPreset, normalizeHrtfSelection, resolveCustomSofaRevision, type HrtfPreset, type HrtfSelection} from './hrtf-presets.js';
+import {CUSTOM_SOFA_CHUNK_BYTES, customSofaChunkCount, MAX_CUSTOM_SOFA_BYTES} from './custom-sofa-transfer.js';
 import {acknowledgeStart, createStartHandshake, nextStartHandshakeAction, recordStartAttempt, shouldAcceptPlaybackStatus, shouldDispatchSessionRecovery, shouldExpirePlaybackStatus, shouldRestartAfterSeek, type StartHandshakeState} from './start-handshake.js';
 
 (function (): void {
@@ -31,6 +32,10 @@ const ALWAYS_ENABLED_STORAGE_KEY = 'alwaysEnableOpenJoc';
 const DIALNORM_STORAGE_KEY = 'dialnormMode';
 const RENDERER_STORAGE_KEY = 'rendererMode';
 const HRTF_STORAGE_KEY = 'hrtfPreset';
+const HRTF_REVISION_STORAGE_KEY = 'hrtfRevision';
+const CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY = 'customSofaLastRevision';
+const HRTF_SELECTION_GENERATION_STORAGE_KEY = 'hrtfSelectionGeneration';
+const HRTF_FALLBACK_STORAGE_KEY = 'hrtfFallbackPreset';
 const OUTPUT_GAIN_STORAGE_KEY = 'outputGainDb';
 const LANGUAGE_STORAGE_KEY = 'overlayLanguage';
 let video: HTMLVideoElement | null = null;
@@ -42,7 +47,11 @@ let isOpenJocRequested = false;
 let latestStatus: ContentStatus | null = null;
 let dialnormMode: DialnormMode = 'calibrated';
 let rendererMode: RendererMode = 'stereo';
-let hrtfPreset: HrtfPreset = DEFAULT_HRTF_PRESET;
+let hrtfPreset: HrtfSelection = DEFAULT_HRTF_PRESET;
+let hrtfSelectionGeneration = 0;
+let customSofaSha256: string | null = null;
+let lastCustomSofaSha256: string | null = null;
+let customSofaFallback: HrtfPreset = DEFAULT_HRTF_PRESET;
 let outputGainDb = 0;
 let overlayLanguage: OverlayLanguage = normalizeOverlayLanguage(undefined);
 let alwaysEnableOpenJoc = false;
@@ -86,10 +95,36 @@ const overlay: JocOverlayController = createJocOverlayController({
     if (isOpenJocRequested) enableOpenJoc();
   },
   onHrtfChange: (hrtf): void => {
+    if (hrtfPreset === 'custom-sofa' && customSofaSha256 !== null) {
+      lastCustomSofaSha256 = customSofaSha256;
+    }
+    const selectedRevision = hrtf === 'custom-sofa'
+      ? resolveCustomSofaRevision(customSofaSha256, lastCustomSofaSha256)
+      : null;
+    if (hrtf === 'custom-sofa' && selectedRevision === null) {
+      overlay.setHrtf(hrtfPreset);
+      overlay.setHrtfLoadState('failed');
+      return;
+    }
+    hrtfSelectionGeneration += 1;
     hrtfPreferenceChanged = true;
     hrtfPreset = hrtf;
-    void chrome.storage.local.set({[HRTF_STORAGE_KEY]: hrtf}).catch(() => undefined);
+    customSofaSha256 = selectedRevision;
+    if (selectedRevision !== null) lastCustomSofaSha256 = selectedRevision;
+    if (hrtf !== 'custom-sofa') customSofaFallback = hrtf;
+    overlay.setHrtfLoadState(null);
+    void chrome.storage.local.set({
+      [HRTF_STORAGE_KEY]: hrtf,
+      [HRTF_REVISION_STORAGE_KEY]: customSofaSha256,
+      [CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY]: lastCustomSofaSha256,
+      [HRTF_SELECTION_GENERATION_STORAGE_KEY]: crypto.randomUUID(),
+      [HRTF_FALLBACK_STORAGE_KEY]: customSofaFallback,
+    }).catch(() => undefined);
     if (isOpenJocRequested) enableOpenJoc();
+  },
+  onCustomSofaSelected: (file): void => {
+    hrtfSelectionGeneration += 1;
+    void importCustomSofa(file, hrtfSelectionGeneration);
   },
   onDialnormChange: (mode): void => {
     dialnormPreferenceChanged = true;
@@ -222,6 +257,113 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+async function importCustomSofa(file: File, selectionGeneration: number): Promise<void> {
+  const chunkCount = customSofaChunkCount(file.size);
+  if (chunkCount === null || file.size > MAX_CUSTOM_SOFA_BYTES) {
+    overlay.setHrtfLoadState('failed');
+    return;
+  }
+  const transferId = crypto.randomUUID();
+  try {
+    await sendCustomSofaTransfer({
+      target: 'background',
+      type: 'custom-sofa-import-start',
+      transferId,
+      byteLength: file.size,
+      preserveSha256: hrtfPreset === 'custom-sofa' ? customSofaSha256 : null,
+    });
+    for (let index = 0; index < chunkCount; index += 1) {
+      const start = index * CUSTOM_SOFA_CHUNK_BYTES;
+      const end = Math.min(start + CUSTOM_SOFA_CHUNK_BYTES, file.size);
+      const chunk = await file.slice(start, end).arrayBuffer();
+      await sendCustomSofaTransfer({
+        target: 'background',
+        type: 'custom-sofa-import-chunk',
+        transferId,
+        index,
+        bytesBase64: arrayBufferToBase64(chunk),
+      });
+    }
+    const committed = await sendCustomSofaTransfer({
+      target: 'background',
+      type: 'custom-sofa-import-commit',
+      transferId,
+      prevalidate: !isOpenJocRequested,
+    });
+    if (committed.sha256 === undefined) throw new Error('Custom SOFA import did not return an integrity hash');
+    if (selectionGeneration !== hrtfSelectionGeneration) {
+      traceLifecycle('custom-sofa-import-superseded', {requestedSha256: committed.sha256});
+      return;
+    }
+    const latestPreference = await chrome.storage.local.get([
+      HRTF_STORAGE_KEY,
+      HRTF_REVISION_STORAGE_KEY,
+      CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY,
+    ]);
+    if (selectionGeneration !== hrtfSelectionGeneration) {
+      traceLifecycle('custom-sofa-import-superseded', {requestedSha256: committed.sha256});
+      return;
+    }
+    if (latestPreference[HRTF_STORAGE_KEY] !== 'custom-sofa'
+      || latestPreference[HRTF_REVISION_STORAGE_KEY] !== committed.sha256) {
+      hrtfPreset = normalizeHrtfSelection(latestPreference[HRTF_STORAGE_KEY]);
+      lastCustomSofaSha256 = resolveCustomSofaRevision(null, latestPreference[CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY]);
+      customSofaSha256 = hrtfPreset === 'custom-sofa'
+        ? resolveCustomSofaRevision(latestPreference[HRTF_REVISION_STORAGE_KEY], lastCustomSofaSha256)
+        : null;
+      overlay.setHrtf(hrtfPreset);
+      overlay.setHrtfLoadState(null);
+      traceLifecycle('custom-sofa-import-superseded', {requestedSha256: committed.sha256});
+      return;
+    }
+    if (hrtfPreset !== 'custom-sofa') customSofaFallback = hrtfPreset;
+    hrtfPreset = 'custom-sofa';
+    customSofaSha256 = committed.sha256;
+    lastCustomSofaSha256 = committed.sha256;
+    hrtfPreferenceChanged = true;
+    overlay.setHrtf('custom-sofa');
+    overlay.setHrtfLoadState(null);
+    void chrome.storage.local.set({
+      [HRTF_STORAGE_KEY]: 'custom-sofa',
+      [HRTF_REVISION_STORAGE_KEY]: customSofaSha256,
+      [CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY]: lastCustomSofaSha256,
+      [HRTF_SELECTION_GENERATION_STORAGE_KEY]: transferId,
+      [HRTF_FALLBACK_STORAGE_KEY]: customSofaFallback,
+    }).catch(() => undefined);
+    traceLifecycle('custom-sofa-imported', {byteLength: file.size});
+    if (isOpenJocRequested) enableOpenJoc();
+  } catch (error: unknown) {
+    void sendCustomSofaTransfer({target: 'background', type: 'custom-sofa-import-abort', transferId}).catch(() => undefined);
+    if (selectionGeneration === hrtfSelectionGeneration) overlay.setHrtfLoadState('failed');
+    traceLifecycle('custom-sofa-import-failed', {reason: error instanceof Error ? error.message : String(error)});
+  }
+}
+
+async function sendCustomSofaTransfer(message: Extract<RuntimeMessage, {readonly type: 'custom-sofa-query' | 'custom-sofa-import-start' | 'custom-sofa-import-chunk' | 'custom-sofa-import-commit' | 'custom-sofa-import-abort'}>): Promise<CustomSofaTransferReply> {
+  const response: unknown = await chrome.runtime.sendMessage(message);
+  if (!isCustomSofaTransferReply(response)) throw new Error('Custom SOFA storage did not respond');
+  if (!response.ok) throw new Error(response.error ?? 'Custom SOFA storage rejected the operation');
+  return response;
+}
+
+type CustomSofaTransferReply = Readonly<{
+  readonly ok: boolean;
+  readonly available?: boolean;
+  readonly byteLength?: number;
+  readonly sha256?: string;
+  readonly error?: string;
+}>;
+
+function isCustomSofaTransferReply(value: unknown): value is CustomSofaTransferReply {
+  const candidate = record(value);
+  return candidate !== null
+    && typeof candidate.ok === 'boolean'
+    && (candidate.available === undefined || typeof candidate.available === 'boolean')
+    && (candidate.byteLength === undefined || (typeof candidate.byteLength === 'number' && Number.isSafeInteger(candidate.byteLength)))
+    && (candidate.sha256 === undefined || (typeof candidate.sha256 === 'string' && /^[0-9a-f]{64}$/.test(candidate.sha256)))
+    && (candidate.error === undefined || typeof candidate.error === 'string');
+}
+
 function mediaKeyString(key: ContentMediaKey): string {
   return `${key.bvid}:${key.aid}:${key.cid}`;
 }
@@ -255,7 +397,7 @@ function dispatchStartRequest(): boolean {
   activeStartRequestId = crypto.randomUUID();
   startHandshake = recordStartAttempt(startHandshake, performance.now());
   traceLifecycle('start-attempt', {attempt: startHandshake.attempts, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE))});
-  send({target: 'background', type: 'start', requestId: activeStartRequestId, pageUrl: location.href, mediaKey: manifest.mediaKey, candidates: manifest.candidates, generation: videoGeneration, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE)), paused: currentVideo.paused, buffering: currentVideo.readyState < 3, dialnorm: dialnormMode, renderer: rendererMode, hrtf: hrtfPreset, gainDb: outputGainDb});
+  send({target: 'background', type: 'start', requestId: activeStartRequestId, pageUrl: location.href, mediaKey: manifest.mediaKey, candidates: manifest.candidates, generation: videoGeneration, videoTimeSamples: Math.max(0, Math.round(currentVideo.currentTime * SAMPLE_RATE)), paused: currentVideo.paused, buffering: currentVideo.readyState < 3, dialnorm: dialnormMode, renderer: rendererMode, hrtf: hrtfPreset, hrtfRevision: hrtfPreset === 'custom-sofa' ? customSofaSha256 : null, gainDb: outputGainDb});
   emitClock();
   return true;
 }
@@ -278,7 +420,7 @@ function maybeEnableAlways(): void {
 
 async function restorePlaybackPreferences(): Promise<void> {
   try {
-    const stored = await chrome.storage.local.get([ALWAYS_ENABLED_STORAGE_KEY, DIALNORM_STORAGE_KEY, RENDERER_STORAGE_KEY, HRTF_STORAGE_KEY, OUTPUT_GAIN_STORAGE_KEY, LANGUAGE_STORAGE_KEY]);
+    const stored = await chrome.storage.local.get([ALWAYS_ENABLED_STORAGE_KEY, DIALNORM_STORAGE_KEY, RENDERER_STORAGE_KEY, HRTF_STORAGE_KEY, HRTF_REVISION_STORAGE_KEY, CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY, HRTF_FALLBACK_STORAGE_KEY, OUTPUT_GAIN_STORAGE_KEY, LANGUAGE_STORAGE_KEY]);
     if (!dialnormPreferenceChanged) {
       dialnormMode = stored[DIALNORM_STORAGE_KEY] === 'unity' ? 'unity' : 'calibrated';
       overlay.setDialnorm(dialnormMode);
@@ -288,8 +430,38 @@ async function restorePlaybackPreferences(): Promise<void> {
       overlay.setRenderer(rendererMode === 'binaural' ? 'binaural-headphones' : 'stereo-speakers');
     }
     if (!hrtfPreferenceChanged) {
-      hrtfPreset = normalizeHrtfPreset(stored[HRTF_STORAGE_KEY]);
-      overlay.setHrtf?.(hrtfPreset);
+      let selectedHrtf = normalizeHrtfSelection(stored[HRTF_STORAGE_KEY]);
+      customSofaFallback = normalizeHrtfPreset(stored[HRTF_FALLBACK_STORAGE_KEY]);
+      lastCustomSofaSha256 = resolveCustomSofaRevision(null, stored[CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY]);
+      if (selectedHrtf === 'custom-sofa') {
+        try {
+          const savedRevision = resolveCustomSofaRevision(stored[HRTF_REVISION_STORAGE_KEY], lastCustomSofaSha256);
+          const customSofa = await sendCustomSofaTransfer({target: 'background', type: 'custom-sofa-query', revision: savedRevision});
+          if (customSofa.available === true && customSofa.sha256 !== undefined) {
+            customSofaSha256 = customSofa.sha256;
+            lastCustomSofaSha256 = customSofa.sha256;
+          } else {
+            selectedHrtf = customSofaFallback;
+            customSofaSha256 = null;
+            lastCustomSofaSha256 = null;
+          }
+        } catch {
+          selectedHrtf = customSofaFallback;
+          customSofaSha256 = null;
+          lastCustomSofaSha256 = null;
+        }
+      }
+      if (!hrtfPreferenceChanged) {
+        hrtfPreset = selectedHrtf;
+        if (selectedHrtf !== 'custom-sofa') {
+          customSofaSha256 = null;
+          customSofaFallback = selectedHrtf;
+        }
+        overlay.setHrtf?.(hrtfPreset);
+        if (stored[HRTF_STORAGE_KEY] !== selectedHrtf) {
+          void chrome.storage.local.set({[HRTF_STORAGE_KEY]: selectedHrtf, [HRTF_REVISION_STORAGE_KEY]: customSofaSha256, [CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY]: lastCustomSofaSha256, [HRTF_FALLBACK_STORAGE_KEY]: customSofaFallback}).catch(() => undefined);
+        }
+      }
     }
     if (!outputGainPreferenceChanged) {
       outputGainDb = normalizeOutputGainDb(stored[OUTPUT_GAIN_STORAGE_KEY]);
@@ -432,14 +604,38 @@ function applyStatus(status: ContentStatus): void {
   startHandshake = acknowledgeStart(startHandshake);
   latestStatus = status;
   const hrtfSelectionRolledBack = status.reason?.startsWith('hrtf-load-error-rollback:') === true;
+  const statusHrtfRevision = status.metrics.hrtfRevision ?? null;
   if ((hrtfSelectionRolledBack || (status.phase === 'error' && status.reason?.toLowerCase().includes('hrtf') === true))
     && status.metrics.hrtf !== null
-    && status.metrics.hrtf !== hrtfPreset) {
+    && (status.metrics.hrtf !== hrtfPreset
+      || (status.metrics.hrtf === 'custom-sofa' && statusHrtfRevision !== customSofaSha256))) {
+    hrtfSelectionGeneration += 1;
     hrtfPreset = status.metrics.hrtf;
+    customSofaSha256 = status.metrics.hrtf === 'custom-sofa' ? statusHrtfRevision : null;
+    if (status.metrics.hrtf === 'custom-sofa') {
+      if (statusHrtfRevision !== null) lastCustomSofaSha256 = statusHrtfRevision;
+    } else {
+      customSofaFallback = status.metrics.hrtf;
+    }
     hrtfPreferenceChanged = true;
     overlay.setHrtf?.(hrtfPreset);
-    void chrome.storage.local.set({[HRTF_STORAGE_KEY]: hrtfPreset}).catch(() => undefined);
-    traceLifecycle('hrtf-selection-rolled-back', {activeHrtf: hrtfPreset});
+    overlay.setHrtfLoadState(null);
+    void chrome.storage.local.set({[HRTF_STORAGE_KEY]: hrtfPreset, [HRTF_REVISION_STORAGE_KEY]: customSofaSha256, [CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY]: lastCustomSofaSha256, [HRTF_SELECTION_GENERATION_STORAGE_KEY]: crypto.randomUUID(), [HRTF_FALLBACK_STORAGE_KEY]: customSofaFallback}).catch(() => undefined);
+    traceLifecycle('hrtf-selection-rolled-back', {activeHrtf: hrtfPreset, activeRevision: customSofaSha256});
+  }
+  const customSofaFailedWithoutRollback = status.phase === 'error'
+    && status.reason?.toLowerCase().includes('hrtf') === true
+    && hrtfPreset === 'custom-sofa'
+    && !hrtfSelectionRolledBack;
+  const shouldRestartWithFallback = customSofaFailedWithoutRollback && isOpenJocRequested;
+  if (customSofaFailedWithoutRollback) {
+    hrtfPreset = customSofaFallback;
+    customSofaSha256 = null;
+    hrtfPreferenceChanged = true;
+    hrtfSelectionGeneration += 1;
+    overlay.setHrtf?.(hrtfPreset);
+    void chrome.storage.local.set({[HRTF_STORAGE_KEY]: hrtfPreset, [HRTF_REVISION_STORAGE_KEY]: null, [CUSTOM_SOFA_LAST_REVISION_STORAGE_KEY]: lastCustomSofaSha256, [HRTF_SELECTION_GENERATION_STORAGE_KEY]: crypto.randomUUID(), [HRTF_FALLBACK_STORAGE_KEY]: customSofaFallback}).catch(() => undefined);
+    traceLifecycle('custom-sofa-failed-fallback', {fallbackHrtf: hrtfPreset});
   }
   if (status.generation > videoGeneration) videoGeneration = status.generation;
   lastStatusAt = performance.now();
@@ -453,6 +649,7 @@ function applyStatus(status: ContentStatus): void {
   }
   overlay.setStatus(status);
   if (status.phase === 'disabled' || status.phase === 'error') overlay.setRequested(false);
+  if (shouldRestartWithFallback) window.setTimeout(() => enableOpenJoc(), 0);
 }
 
 function enableOpenJoc(): void {

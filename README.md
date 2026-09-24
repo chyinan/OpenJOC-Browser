@@ -17,6 +17,7 @@ The first public release targets Microsoft Edge and Google Chrome. The primary s
 - Stereo (Speakers) output and Binaural (Headphones) output.
 - Fixed Binaural virtual layout: 7.1.4.
 - Built-in SADIE II D1 (KU100) and SADIE II D2 (KEMAR) HRTFs for Binaural mode; D1 remains the default.
+- Local Custom SOFA import for compatible SimpleFreeFieldHRIR datasets.
 - The Bilibili `<video>` remains the video renderer and master clock.
 - Play, pause, seek, buffering, refresh, and single-page media changes are generation-aware.
 - Saved renderer, Dialnorm, always-enable, and custom output-gain preferences.
@@ -81,13 +82,13 @@ The v0.1.0 implementation targets:
 - 48 kHz, two-channel output and 1.0x playback.
 - Unencrypted, browser-fetchable E-AC-3 JOC CMAF representations.
 
-Safari, Firefox, DRM/encrypted representations, other Bilibili player classes, non-1.0x playback, head tracking, custom SOFA selection, and virtual 9.1.6 are not part of this release. Bilibili availability can vary by account, region, content, and session entitlement. A page title or ordinary E-AC-3 label is not treated as proof of JOC; in-band OpenJOC confirmation is required.
+Safari, Firefox, DRM/encrypted representations, other Bilibili player classes, non-1.0x playback, head tracking, and virtual 9.1.6 are not part of this release. Custom SOFA import is supported for compatible local files. Bilibili availability can vary by account, region, content, and session entitlement. A page title or ordinary E-AC-3 label is not treated as proof of JOC; in-band OpenJOC confirmation is required.
 
 This project does not claim parity with a platform Dolby renderer, identical native Dolby/Apple binaural behavior, lossless reproduction of an authored master, or certification/endorsement by Dolby Laboratories.
 
 ## Privacy and security
 
-The extension reads the current Bilibili page's media identity, playback manifest candidates, video clock, and player mute/volume state only to operate the current session. It does not send audio, diagnostics, or browsing history to an OpenJOC service. It has no analytics, telemetry, account login, or credential collection. Only playback preferences are stored locally in extension storage.
+The extension reads the current Bilibili page's media identity, playback manifest candidates, video clock, and player mute/volume state only to operate the current session. It does not send audio, diagnostics, or browsing history to an OpenJOC service. It has no analytics, telemetry, account login, or credential collection. Playback preferences are stored in extension storage; a user-selected Custom SOFA file is stored locally in extension IndexedDB and is never uploaded.
 
 Media requests go to Bilibili endpoints needed for the selected session. Signed query strings are not persisted in extension storage or included in diagnostics. Both built-in HRTFs ship with the extension; HRTF selection makes no network request. The extension never loads remote JavaScript or WASM. The exact permissions and data flows are documented in [privacy](docs/privacy.md) and [security](SECURITY.md).
 
@@ -142,12 +143,15 @@ OpenJOC-Browser 通过 WebAssembly 和 Web Audio，将 OpenJOC 的 E-AC-3 JOC �
 - 支持 Stereo（扬声器）和 Binaural（耳机）输出；
 - 双耳模式使用固定的 7.1.4 虚拟扬声器布局；
 - 双耳模式内置 SADIE II D1（KU100）和 SADIE II D2（KEMAR）HRTF，D1 仍为默认配置；
+- 双耳模式支持导入兼容的本地 Custom SOFA；文件仅保存在扩展 IndexedDB，不会上传；
 - Bilibili 的 `<video>` 元素继续负责视频渲染和主时钟；
 - 播放、暂停、跳转、缓冲、刷新和单页媒体切换均按播放代际处理；
 - 保存渲染器、Dialnorm、始终启用和自定义输出增益偏好；
 - 提供 JOC 配置、同步漂移、缓冲区、欠载、解码耗时和 WASM 内存诊断信息。
 
 扩展包同时包含 D1 和 D2。安装后两套配置都可立即离线使用；加载前会按包内声明的文件大小和 SHA-256 校验所选资源。
+
+选择 Custom SOFA… 可从本地导入文件。当前支持 OpenJOC 严格解析的 NetCDF CDF-1 `SimpleFreeFieldHRIR` SOFA，采样率为 48 kHz，文件上限为 16 MiB；WASM 还限制展开后的 HRIR 系数总量为一百万，并拒绝过大的方向数、IR 长度或 Delay。导入数据会按 SHA-256 保存在本机扩展 IndexedDB 中，以供后续会话使用；不会上传。
 
 ## 工作原理
 
@@ -206,13 +210,13 @@ v0.1.0 版本面向以下范围：
 - 48 kHz、双声道输出和 1.0 倍速播放；
 - 浏览器可以请求、且未加密的 E-AC-3 JOC CMAF 表示。
 
-Safari、Firefox、DRM/加密表示、其他 Bilibili 播放器类型、非 1.0 倍速播放、头部跟踪、自定义 SOFA 选择以及虚拟 9.1.6 不属于此版本。Bilibili 的可用性可能因账号、地区、内容和会话权限而异。页面标题或普通 E-AC-3 标签不能证明存在 JOC，必须经过 OpenJOC 的带内确认。
+Safari、Firefox、DRM/加密表示、其他 Bilibili 播放器类型、非 1.0 倍速播放、头部跟踪以及虚拟 9.1.6 不属于此版本。Bilibili 的可用性可能因账号、地区、内容和会话权限而异。页面标题或普通 E-AC-3 标签不能证明存在 JOC，必须经过 OpenJOC 的带内确认。
 
 本项目不声称与平台 Dolby 渲染器具有等价结果，不声称与原生 Dolby/Apple 双耳行为完全一致，不声称能够无损还原创作母版，也不代表 Dolby Laboratories 的认证或认可。
 
 ## 隐私与安全
 
-扩展只读取当前 Bilibili 页面的媒体身份、播放清单候选、视频时钟以及播放器静音/音量状态，用于处理当前会话。它不会向 OpenJOC 服务发送音频、诊断信息或浏览历史，也没有分析、遥测、账号登录或凭据收集功能。只有播放偏好会存储在扩展本地存储中。
+扩展只读取当前 Bilibili 页面的媒体身份、播放清单候选、视频时钟以及播放器静音/音量状态，用于处理当前会话。它不会向 OpenJOC 服务发送音频、诊断信息或浏览历史，也没有分析、遥测、账号登录或凭据收集功能。播放偏好保存在扩展本地存储中；用户选择的 Custom SOFA 文件仅保存在扩展 IndexedDB 中，不会上传。
 
 媒体请求只发送到当前会话所需的 Bilibili 端点。签名查询字符串不会持久化到扩展存储，也不会写入诊断信息。[隐私说明](docs/privacy.md)和[安全策略](SECURITY.md)记录了完整的权限和数据流。
 

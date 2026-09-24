@@ -1,6 +1,7 @@
 // pattern: Functional Core
 
 import {advanceOverlayState, createOverlayState, needsOverlayMarkupRebuild, overlayRendererLabel, resetOverlayState, type OverlayEvent} from '../src/joc-overlay-state.js';
+import {normalizeHrtfSelection} from '../src/hrtf-presets.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -52,6 +53,8 @@ function run(): void {
   assert(state.renderer === 'binaural-headphones', 'available Binaural renderer can be explicitly selected');
   state = apply(state, {type: 'set-hrtf', hrtf: 'sadie-ii-d2-kemar'});
   assert(state.hrtf === 'sadie-ii-d2-kemar', 'built-in HRTF selection is retained in controller state');
+  state = apply(state, {type: 'set-hrtf', hrtf: normalizeHrtfSelection('custom-sofa')});
+  assert(state.hrtf === 'custom-sofa', 'custom SOFA selection is retained in controller state');
   state = apply(state, {type: 'set-dialnorm', mode: 'unity'});
   assert(state.dialnorm === 'unity', 'dialnorm selection is retained in controller state');
   state = apply(state, {type: 'set-always-enabled', enabled: true});
@@ -62,7 +65,7 @@ function run(): void {
   const reset = resetOverlayState(state);
   assert(reset.mode === 'hidden', 'reset clears the display lifecycle');
   assert(reset.renderer === 'binaural-headphones', 'reset preserves the selected renderer');
-  assert(reset.hrtf === 'sadie-ii-d2-kemar', 'reset preserves the selected HRTF');
+  assert(reset.hrtf === 'custom-sofa', 'reset preserves the selected Custom SOFA source');
   assert(reset.dialnorm === 'unity', 'reset preserves the selected Dialnorm mode');
   assert(reset.alwaysEnabled, 'reset preserves the always-enable preference');
   assert(reset.language === 'en', 'reset preserves the selected interface language');

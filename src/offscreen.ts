@@ -155,7 +155,12 @@ function sendStatus(
     stage: session.stage,
     renderer: decoder?.renderer ?? session.request.renderer,
     virtualLayout: decoder?.virtualLayout ?? (session.request.renderer === 'binaural' ? '7.1.4' : null),
-    hrtf: decoder?.hrtf ?? (session.request.renderer === 'binaural' ? (session.request.hrtf ?? 'sadie-ii-d1-ku100') : null),
+    hrtf: decoder === null
+      ? (session.request.renderer === 'binaural' ? (session.request.hrtf ?? 'sadie-ii-d1-ku100') : null)
+      : decoder.hrtf,
+    hrtfRevision: decoder === null
+      ? (session.request.renderer === 'binaural' ? (session.request.hrtfRevision ?? null) : null)
+      : decoder.hrtfRevision,
     binauralLatencyMs: decoder?.renderer === 'binaural' ? decoder.latencySamples * 1000 / SAMPLE_RATE : null,
     binauralP95Ms: decoder?.renderer === 'binaural' ? decoder.binauralP95Ms : null,
     binauralMaxMs: decoder?.renderer === 'binaural' ? decoder.binauralMaxMs : null,
@@ -418,7 +423,7 @@ async function pumpSegments(session: Session): Promise<void> {
         if (!isCurrentSession(session)) return;
         session.stage = 'decoding';
         const buffer = sample.bytes.slice().buffer;
-        decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.audioGeneration, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm, renderer: session.request.renderer, hrtf: session.request.hrtf} satisfies WorkerCommand, [buffer]);
+        decoderWorker.postMessage({type: 'decode-cmaf-sample', generation: session.audioGeneration, bytes: buffer, ptsSamples: sample.ptsSamples, discontinuity: firstSample, preroll: firstSample, dialnorm: session.request.dialnorm, renderer: session.request.renderer, hrtf: session.request.hrtf, hrtfRevision: session.request.hrtfRevision} satisfies WorkerCommand, [buffer]);
         firstSample = false;
       }
       await waitForDecoderProgress(session, previousAccessUnits);
@@ -610,6 +615,7 @@ async function startSession(request: StartRequest, token: number): Promise<void>
         dialnorm: request.dialnorm,
         renderer: request.renderer,
         hrtf: request.hrtf,
+        hrtfRevision: request.hrtfRevision,
       } satisfies WorkerCommand);
     }
     void pumpSegments(session);

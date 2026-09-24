@@ -2,8 +2,11 @@
 
 import {isLegacyOffscreenStatus, isRuntimeMessage, type BilibiliAudioCandidate, type MediaKey, type RendererMode, type RuntimeMessage} from './extension-protocol.js';
 import {isAllowedBilibiliMediaUrl} from './media-url-policy.js';
-import {DEFAULT_HRTF_PRESET, normalizeHrtfPreset, type HrtfPreset} from './hrtf-presets.js';
+import {DEFAULT_HRTF_PRESET, normalizeHrtfSelection, type HrtfSelection} from './hrtf-presets.js';
 import {clearRetiredHrtfAssetCache, HRTF_ASSET_CACHE_NAME} from './hrtf-assets.js';
+import {abortCustomSofaImport, beginCustomSofaImport, commitCustomSofaImport, discardCustomSofaAsset, loadCustomSofaAsset, writeCustomSofaImportChunk} from './custom-sofa-storage.js';
+import {isValidCustomSofaBase64} from './custom-sofa-transfer.js';
+import {loadOpenJocWasm} from './wasm-bindings.js';
 import {isContentSessionReset, isStaleContentGeneration, mediaSessionRestartRequired, nextManifestGeneration, type MediaSessionSnapshot} from './media-session-policy.js';
 
 type BilibiliSession = {
@@ -19,7 +22,8 @@ type BilibiliSession = {
   readonly buffering: boolean;
   readonly dialnorm: 'calibrated' | 'unity';
   readonly renderer: RendererMode;
-  readonly hrtf: HrtfPreset;
+  readonly hrtf: HrtfSelection;
+  readonly hrtfRevision: string | null;
   readonly gainDb: number;
   readonly started: boolean;
 };
@@ -28,7 +32,8 @@ type PendingHrtfSwitch = Readonly<{
   readonly fallback: BilibiliSession;
   readonly requestId: string;
   readonly generation: number;
-  readonly requestedHrtf: HrtfPreset;
+  readonly requestedHrtf: HrtfSelection;
+  readonly requestedHrtfRevision: string | null;
 }>;
 
 type PendingPageRange = Readonly<{
@@ -37,6 +42,18 @@ type PendingPageRange = Readonly<{
   readonly url: string;
   readonly start: number;
   readonly end: number;
+}>;
+
+type CustomSofaTransferRequest = Extract<RuntimeMessage, {
+  readonly type: 'custom-sofa-query' | 'custom-sofa-import-start' | 'custom-sofa-import-chunk' | 'custom-sofa-import-commit' | 'custom-sofa-import-abort';
+}>;
+
+type CustomSofaTransferReply = Readonly<{
+  readonly ok: boolean;
+  readonly available?: boolean;
+  readonly byteLength?: number;
+  readonly sha256?: string;
+  readonly error?: string;
 }>;
 
 const OFFSCREEN_PATH = 'offscreen.html';
@@ -49,6 +66,7 @@ const clockTails = new Map<number, Promise<void>>();
 const legacyRecoveryTabs = new Set<number>();
 let offscreenCreation: Promise<void> | null = null;
 let offscreenRecreation: Promise<void> | null = null;
+let customSofaCommitTail: Promise<void> = Promise.resolve();
 
 function isBilibiliVideoPage(value: string): boolean {
   try {
@@ -152,7 +170,7 @@ function invalidateObservedSessions(observedSessions: ReadonlyArray<BilibiliSess
 
 async function sendSessionStart(session: BilibiliSession): Promise<void> {
   try {
-    await sendToOffscreen({target: 'offscreen', type: 'start', requestId: session.requestId, tabId: session.tabId, pageUrl: session.pageUrl, mediaKey: session.mediaKey, candidate: session.candidate, generation: session.generation, videoTimeSamples: session.videoTimeSamples, paused: session.paused, buffering: session.buffering, dialnorm: session.dialnorm, renderer: session.renderer, hrtf: session.hrtf, gainDb: session.gainDb});
+    await sendToOffscreen({target: 'offscreen', type: 'start', requestId: session.requestId, tabId: session.tabId, pageUrl: session.pageUrl, mediaKey: session.mediaKey, candidate: session.candidate, generation: session.generation, videoTimeSamples: session.videoTimeSamples, paused: session.paused, buffering: session.buffering, dialnorm: session.dialnorm, renderer: session.renderer, hrtf: session.hrtf, hrtfRevision: session.hrtfRevision, gainDb: session.gainDb});
   } catch (error: unknown) {
     const current = sessions.get(session.tabId);
     if (current?.requestId === session.requestId && current.generation === session.generation) {
@@ -215,15 +233,16 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
       const baseline = isReloadRecovery ? undefined : previous;
       if (isStaleContentGeneration(isReloadRecovery ? null : previousSnapshot, message.generation)) return;
       const generation = Math.max(message.generation, baseline?.started === true ? baseline.generation + 1 : baseline?.generation ?? 0);
-      const selectedHrtf = normalizeHrtfPreset(message.hrtf);
-      const next = {tabId, documentId, requestId: message.requestId, pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: message.videoTimeSamples, paused: message.paused ?? false, buffering: message.buffering ?? false, dialnorm: message.dialnorm, renderer: message.renderer, hrtf: selectedHrtf, gainDb: message.gainDb ?? 0, started: true};
+      const selectedHrtf = normalizeHrtfSelection(message.hrtf);
+      const selectedHrtfRevision = selectedHrtf === 'custom-sofa' ? message.hrtfRevision ?? null : null;
+      const next = {tabId, documentId, requestId: message.requestId, pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: message.videoTimeSamples, paused: message.paused ?? false, buffering: message.buffering ?? false, dialnorm: message.dialnorm, renderer: message.renderer, hrtf: selectedHrtf, hrtfRevision: selectedHrtfRevision, gainDb: message.gainDb ?? 0, started: true};
       const priorSwitch = pendingHrtfSwitches.get(tabId);
       const fallback = priorSwitch?.fallback ?? baseline;
       const isHrtfOnlySwitch = previous?.started === true
         && !isReloadRecovery
         && previous.renderer === 'binaural'
         && next.renderer === 'binaural'
-        && previous.hrtf !== selectedHrtf
+        && (previous.hrtf !== selectedHrtf || previous.hrtfRevision !== selectedHrtfRevision)
         && fallback?.renderer === 'binaural'
         && mediaKeyEquals(fallback.mediaKey, next.mediaKey)
         && fallback.candidate.baseUrl === next.candidate.baseUrl
@@ -234,6 +253,7 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
           requestId: next.requestId,
           generation: next.generation,
           requestedHrtf: selectedHrtf,
+          requestedHrtfRevision: selectedHrtfRevision,
         });
       } else {
         pendingHrtfSwitches.delete(tabId);
@@ -273,7 +293,7 @@ async function handleContentMessage(message: RuntimeMessage, tabId: number, docu
       const hasSessionChanged = mediaSessionRestartRequired(baselineSnapshot, nextSnapshot);
       if (hasSessionChanged) pendingHrtfSwitches.delete(tabId);
       const generation = Math.max(message.generation, nextManifestGeneration(baselineSnapshot, nextSnapshot));
-      const next = {tabId, documentId, requestId: baseline?.requestId ?? crypto.randomUUID(), pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: baseline?.videoTimeSamples ?? 0, paused: baseline?.paused ?? false, buffering: baseline?.buffering ?? false, dialnorm: baseline?.dialnorm ?? 'calibrated', renderer: baseline?.renderer ?? 'stereo', hrtf: baseline?.hrtf ?? DEFAULT_HRTF_PRESET, gainDb: baseline?.gainDb ?? 0, started: baseline?.started ?? false};
+      const next = {tabId, documentId, requestId: baseline?.requestId ?? crypto.randomUUID(), pageUrl: message.pageUrl, mediaKey: message.mediaKey, candidate, generation, videoTimeSamples: baseline?.videoTimeSamples ?? 0, paused: baseline?.paused ?? false, buffering: baseline?.buffering ?? false, dialnorm: baseline?.dialnorm ?? 'calibrated', renderer: baseline?.renderer ?? 'stereo', hrtf: baseline?.hrtf ?? DEFAULT_HRTF_PRESET, hrtfRevision: baseline?.hrtfRevision ?? null, gainDb: baseline?.gainDb ?? 0, started: baseline?.started ?? false};
       sessions.set(tabId, next);
       if (baseline?.started === true && hasSessionChanged) await sendSessionStart(next);
       return;
@@ -447,6 +467,103 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessage
   if (sender.id === chrome.runtime.id && isLegacyOffscreenStatus(rawMessage)) recoverLegacyOffscreen(rawMessage.tabId);
 });
 
+chrome.runtime.onMessage.addListener((
+  rawMessage: unknown,
+  sender: ChromeMessageSender,
+  sendResponse: (response: unknown) => void,
+): boolean | void => {
+  if (!isRuntimeMessage(rawMessage)
+    || rawMessage.target !== 'background'
+    || !isCustomSofaTransferRequest(rawMessage)) return;
+  if (sender.id !== chrome.runtime.id || tabIdFromSender(sender) === null) {
+    sendResponse({ok: false, error: 'custom SOFA import must come from an OpenJOC tab'} satisfies CustomSofaTransferReply);
+    return;
+  }
+  void handleCustomSofaTransfer(rawMessage)
+    .then((reply) => sendResponse(reply))
+    .catch((error: unknown) => sendResponse({
+      ok: false,
+      error: error instanceof Error ? error.message : 'failed to store Custom SOFA data',
+    } satisfies CustomSofaTransferReply));
+  return true;
+});
+
+async function handleCustomSofaTransfer(message: CustomSofaTransferRequest): Promise<CustomSofaTransferReply> {
+  switch (message.type) {
+    case 'custom-sofa-query': {
+      const asset = await loadCustomSofaAsset(message.revision ?? null);
+      return asset === null
+        ? {ok: true, available: false}
+        : {ok: true, available: true, sha256: asset.sha256};
+    }
+    case 'custom-sofa-import-start':
+      await chrome.storage.local.set({hrtfSelectionGeneration: message.transferId});
+      await beginCustomSofaImport(message.transferId, message.byteLength, message.preserveSha256 ?? null);
+      return {ok: true};
+    case 'custom-sofa-import-chunk': {
+      if (!isValidCustomSofaBase64(message.bytesBase64)) throw new Error('invalid Custom SOFA chunk encoding');
+      const encoded = atob(message.bytesBase64);
+      const bytes = new Uint8Array(encoded.length);
+      for (let index = 0; index < encoded.length; index += 1) bytes[index] = encoded.charCodeAt(index);
+      await writeCustomSofaImportChunk(message.transferId, message.index, bytes);
+      return {ok: true};
+    }
+    case 'custom-sofa-import-commit': {
+      return enqueueCustomSofaCommit(async(): Promise<CustomSofaTransferReply> => {
+        const selectionBefore = await chrome.storage.local.get(['hrtfPreset', 'hrtfRevision', 'hrtfSelectionGeneration']);
+        const stored = await chrome.storage.local.get(['hrtfRevision', 'customSofaLastRevision']);
+        const preserveSha256 = [stored.hrtfRevision, stored.customSofaLastRevision]
+          .find((revision): revision is string => typeof revision === 'string' && /^[0-9a-f]{64}$/.test(revision)) ?? null;
+        const asset = await commitCustomSofaImport(message.transferId, preserveSha256);
+        if (message.prevalidate === true) {
+          try {
+            const decoder = await loadOpenJocWasm(
+              new URL(chrome.runtime.getURL('wasm/openjoc_wasm.wasm')),
+              {renderer: 'binaural', hrtf: 'custom-sofa', hrtfRevision: asset.sha256},
+            );
+            decoder.destroy();
+          } catch (error: unknown) {
+            if (asset.created) await discardCustomSofaAsset(asset.sha256, asset.revision);
+            throw new Error('Custom SOFA is not compatible with the fixed 7.1.4 binaural renderer', {cause: error});
+          }
+        }
+        const selectionAfter = await chrome.storage.local.get(['hrtfPreset', 'hrtfRevision', 'hrtfSelectionGeneration']);
+        const selectionIsCurrent = selectionBefore.hrtfSelectionGeneration === message.transferId
+          && selectionAfter.hrtfSelectionGeneration === message.transferId
+          && selectionAfter.hrtfPreset === selectionBefore.hrtfPreset
+          && selectionAfter.hrtfRevision === selectionBefore.hrtfRevision;
+        if (selectionIsCurrent) {
+          await chrome.storage.local.set({
+            hrtfPreset: 'custom-sofa',
+            hrtfRevision: asset.sha256,
+            customSofaLastRevision: asset.sha256,
+            hrtfSelectionGeneration: message.transferId,
+          });
+        }
+        return {ok: true, byteLength: asset.byteLength, sha256: asset.sha256};
+      });
+    }
+    case 'custom-sofa-import-abort':
+      await abortCustomSofaImport(message.transferId);
+      return {ok: true};
+  }
+}
+
+function enqueueCustomSofaCommit(operation: () => Promise<CustomSofaTransferReply>): Promise<CustomSofaTransferReply> {
+  const queued = customSofaCommitTail.then(operation);
+  customSofaCommitTail = queued.then(() => undefined, () => undefined);
+  return queued;
+}
+
+function isCustomSofaTransferRequest(message: RuntimeMessage): message is CustomSofaTransferRequest {
+  return message.target === 'background'
+    && (message.type === 'custom-sofa-query'
+      || message.type === 'custom-sofa-import-start'
+      || message.type === 'custom-sofa-import-chunk'
+      || message.type === 'custom-sofa-import-commit'
+      || message.type === 'custom-sofa-import-abort');
+}
+
 chrome.runtime.onInstalled.addListener((details: ChromeInstalledDetails): void => {
   if (details.reason === 'install' || details.reason === 'update') requestRetiredHrtfCachePurge();
 });
@@ -493,7 +610,8 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessage
       && rawMessage.reason?.toLowerCase().includes('hrtf') === true
       && pendingHrtfSwitch?.requestId === rawMessage.requestId
       && pendingHrtfSwitch.generation === session.generation
-      && rawMessage.metrics.hrtf === pendingHrtfSwitch.fallback.hrtf) {
+      && rawMessage.metrics.hrtf === pendingHrtfSwitch.fallback.hrtf
+      && (rawMessage.metrics.hrtfRevision ?? null) === pendingHrtfSwitch.fallback.hrtfRevision) {
       pendingHrtfSwitches.delete(rawMessage.tabId);
       const restoredSession: BilibiliSession = {
         ...pendingHrtfSwitch.fallback,
@@ -518,6 +636,7 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessage
           renderer: restoredSession.renderer,
           virtualLayout: restoredSession.renderer === 'binaural' ? '7.1.4' : null,
           hrtf: restoredSession.renderer === 'binaural' ? restoredSession.hrtf : null,
+          hrtfRevision: restoredSession.renderer === 'binaural' ? restoredSession.hrtfRevision : null,
         },
       };
       void chrome.tabs.sendMessage(rawMessage.tabId, rollbackStatus).catch(() => undefined);
@@ -531,7 +650,8 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessage
     }
     if (pendingHrtfSwitch?.requestId === rawMessage.requestId
       && rawMessage.phase !== 'error'
-      && rawMessage.metrics.hrtf === pendingHrtfSwitch.requestedHrtf) {
+      && rawMessage.metrics.hrtf === pendingHrtfSwitch.requestedHrtf
+      && (rawMessage.metrics.hrtfRevision ?? null) === pendingHrtfSwitch.requestedHrtfRevision) {
       pendingHrtfSwitches.delete(rawMessage.tabId);
     }
     sessions.set(rawMessage.tabId, {...session, started: rawMessage.phase !== 'disabled' && rawMessage.phase !== 'error', generation: rawMessage.generation});

@@ -1,15 +1,15 @@
 // pattern: Functional Core
 
 import {type RendererMode} from './extension-protocol.js';
-import {type HrtfPreset} from './hrtf-presets.js';
+import {type HrtfSelection} from './hrtf-presets.js';
 import {type HrtfAssetLoadStage} from './hrtf-assets.js';
 
 export const MAX_INPUT_FILE_BYTES = 128 * 1024 * 1024;
 
 export type WorkerCommand =
-  | Readonly<{type: 'decode'; generation: number; bytes: ArrayBuffer; renderer?: RendererMode; hrtf?: HrtfPreset}>
-  | Readonly<{type: 'prepare-cmaf-decoder'; generation: number; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfPreset}>
-  | Readonly<{type: 'decode-cmaf-sample'; generation: number; bytes: ArrayBuffer; ptsSamples: number; discontinuity: boolean; preroll: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfPreset}>
+  | Readonly<{type: 'decode'; generation: number; bytes: ArrayBuffer; renderer?: RendererMode; hrtf?: HrtfSelection; hrtfRevision?: string | null}>
+  | Readonly<{type: 'prepare-cmaf-decoder'; generation: number; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfSelection; hrtfRevision?: string | null}>
+  | Readonly<{type: 'decode-cmaf-sample'; generation: number; bytes: ArrayBuffer; ptsSamples: number; discontinuity: boolean; preroll: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfSelection; hrtfRevision?: string | null}>
   | Readonly<{type: 'end-cmaf'; generation: number}>
   | Readonly<{type: 'pause'; generation: number}>
   | Readonly<{type: 'resume'; generation: number}>
@@ -19,7 +19,8 @@ export type WorkerCommand =
 export type DecoderWorkerStatus = Readonly<{
   readonly renderer: RendererMode;
   readonly virtualLayout: '7.1.4' | null;
-  readonly hrtf: HrtfPreset | null;
+  readonly hrtf: HrtfSelection | null;
+  readonly hrtfRevision: string | null;
   readonly latencySamples: number;
   readonly sampleRate: number | null;
   readonly outputChannels: number;
