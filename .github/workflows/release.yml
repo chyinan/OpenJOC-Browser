@@ -16,7 +16,7 @@ jobs:
   release:
     runs-on: windows-latest
     env:
-      OPENJOC_SOURCE_PIN: ${{ vars.OPENJOC_SOURCE_PIN || 'bedba28a4fd25f5f6c659c15b84b0e763a674f4e' }}
+      OPENJOC_SOURCE_PIN: ${{ vars.OPENJOC_SOURCE_PIN || 'a7c82ef01ab507977134f96b7a7b627118d342cc' }}
     steps:
       - name: Check out tagged Browser source
         uses: actions/checkout@v7

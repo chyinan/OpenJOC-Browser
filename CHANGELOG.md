@@ -2,10 +2,24 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-25
+
 ### Added
 
-- Added an interface-language selector to the advanced panel. The controller now renders from a shared Chinese/English catalogue, defaults to Chinese, and saves the choice locally; the panel keeps its existing layout, controls, and styling. This includes the diagnostics group headings, which are keyed by a stable group id instead of a display string.
-- Added catalogue, overlay, and packaged-bundle coverage for both interface languages, including assertions on the rendered diagnostics group headings.
+- Added a local Custom SOFA importer with parser validation, SHA-256 identity, and IndexedDB persistence. Imported SOFA bytes stay on the device.
+- Bundled SADIE II D1 / KU100 and SADIE II D2 / KEMAR for offline use; D1 remains the default.
+- Added interface-language selection with Chinese, English, and Japanese translations.
+- Added catalogue, overlay, and packaged-bundle coverage for all supported interface languages.
+
+### Changed
+
+- Reduced first binaural-switch latency by beginning HRTF preparation while the replacement audio segment is being fetched.
+- Kept HRTF selection and renderer revisions consistent across cached Custom SOFA switches.
+
+### Fixed
+
+- Prevented a delayed Custom SOFA import from overriding a newer HRTF selection.
+- Preserved the previous active profile when Custom SOFA validation or renderer initialization fails.
 
 ## [0.1.6] - 2026-09-14
 
