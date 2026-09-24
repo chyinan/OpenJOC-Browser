@@ -83,11 +83,35 @@ jobs:
           npm run package:release -- --version $version
           npm run validate:release -- --version $version
 
+      - name: Prepare release notes from the changelog
+        id: release-notes
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          $heading = "^## \[$([regex]::Escape($version))\](?:\s|$)"
+          $lines = [IO.File]::ReadAllLines('CHANGELOG.md')
+          $start = -1
+          for ($index = 0; $index -lt $lines.Length; $index++) {
+            if ($lines[$index] -match $heading) { $start = $index; break }
+          }
+          if ($start -lt 0) { throw "CHANGELOG.md has no section for $version." }
+          $end = $lines.Length
+          for ($index = $start + 1; $index -lt $lines.Length; $index++) {
+            if ($lines[$index] -match '^##\s+\[') { $end = $index; break }
+          }
+          if ($end -le $start + 1) { throw "CHANGELOG.md section for $version is empty." }
+          $notes = ($lines[$start..($end - 1)] -join "`n") + "`n"
+          $notesPath = Join-Path $env:RUNNER_TEMP 'openjoc-browser-release-notes.md'
+          [IO.File]::WriteAllText($notesPath, $notes, [Text.UTF8Encoding]::new($false))
+          "notes_path=$notesPath" >> $env:GITHUB_OUTPUT
+
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           draft: true
-          generate_release_notes: true
+          body_path: ${{ steps.release-notes.outputs.notes_path }}
           files: |
             release/OpenJOC-Browser-${{ github.ref_name }}-chromium-standard.zip
             release/OpenJOC-Browser-${{ github.ref_name }}-chromium-standard.zip.sha256
