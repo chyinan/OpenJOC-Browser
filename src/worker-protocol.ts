@@ -8,6 +8,7 @@ export const MAX_INPUT_FILE_BYTES = 128 * 1024 * 1024;
 
 export type WorkerCommand =
   | Readonly<{type: 'decode'; generation: number; bytes: ArrayBuffer; renderer?: RendererMode; hrtf?: HrtfPreset}>
+  | Readonly<{type: 'prepare-cmaf-decoder'; generation: number; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfPreset}>
   | Readonly<{type: 'decode-cmaf-sample'; generation: number; bytes: ArrayBuffer; ptsSamples: number; discontinuity: boolean; preroll: boolean; dialnorm: 'calibrated' | 'unity'; renderer: RendererMode; hrtf?: HrtfPreset}>
   | Readonly<{type: 'end-cmaf'; generation: number}>
   | Readonly<{type: 'pause'; generation: number}>

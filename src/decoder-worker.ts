@@ -276,6 +276,10 @@ async function handleCommand(command: WorkerCommand): Promise<void> {
       case 'decode':
         await handleDecode(command.bytes, command.generation, command.renderer ?? 'stereo', command.hrtf ?? DEFAULT_HRTF_PRESET);
         return;
+      case 'prepare-cmaf-decoder':
+        if (!isCurrentGeneration(command.generation, generation)) return;
+        await ensureCmafDecoder(command.generation, command.dialnorm, command.renderer, command.hrtf ?? DEFAULT_HRTF_PRESET);
+        return;
       case 'decode-cmaf-sample':
         await handleCmafSample(command);
         return;
@@ -332,7 +336,7 @@ function handleCommandError(command: WorkerCommand, error: unknown): void {
 
 workerScope.onmessage = (event: MessageEvent<WorkerCommand>): void => {
   const command = event.data;
-  if (command.type === 'decode-cmaf-sample' || command.type === 'end-cmaf') {
+  if (command.type === 'prepare-cmaf-decoder' || command.type === 'decode-cmaf-sample' || command.type === 'end-cmaf') {
     if (command.type === 'decode-cmaf-sample' && command.generation > generation) {
       generation = command.generation;
       decoderSlot.cancelPendingLoad();

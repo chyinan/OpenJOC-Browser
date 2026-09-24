@@ -159,8 +159,8 @@ export async function createPlaybackRuntime(options = {}) {
     getOutputTimestamp() {return {contextTime: performance.now() / 1000, performanceTime: performance.now()};}
     createGain() {return {gain: {value: 0}, connect() {return this;}};}
     createConstantSource() {return {offset: {value: 0}, connect(target) {return target;}, start() {}, stop() {}, disconnect() {}};}
-    async resume() {this.state = 'running';}
-    async suspend() {this.state = 'suspended';}
+    async resume() {options.onAudioContextResume?.(); this.state = 'running';}
+    async suspend() {options.onAudioContextSuspend?.(); this.state = 'suspended';}
     async close() {this.state = 'closed';}
   }
 
@@ -183,6 +183,7 @@ export async function createPlaybackRuntime(options = {}) {
         fetch: async (resource) => {
           const requestedUrl = new URL(String(resource));
           if (requestedUrl.pathname.includes('/hrtf/')) {
+            options.onHrtfAssetFetch?.();
             const fileName = requestedUrl.pathname.split('/').pop();
             return new Response(readFileSync(new URL(`../../extension/wasm/hrtf/${fileName}`, import.meta.url)));
           }
@@ -261,9 +262,10 @@ export async function createPlaybackRuntime(options = {}) {
         target: 'offscreen', type: 'start', requestId, tabId, generation,
         pageUrl: `https://www.bilibili.com/video/BV${media}/`,
         mediaKey: {bvid: `BV${media}`, aid: media, cid: media},
-        candidate,
+        candidate: playbackState.candidate ?? candidate,
         videoTimeSamples: 0, paused: playbackState.paused ?? false, buffering: playbackState.buffering ?? false,
-        dialnorm: 'unity', renderer: 'stereo',
+        dialnorm: 'unity', renderer: playbackState.renderer ?? 'stereo',
+        ...(playbackState.hrtf === undefined ? {} : {hrtf: playbackState.hrtf}),
       };
       dispatch(request);
       return request;

@@ -18,6 +18,112 @@ test('refresh resets page generation while the existing audio pipeline accepts n
   }
 });
 
+test('renderer and HRTF changes reuse the active media index and native mute state', async () => {
+  let indexRequests = 0;
+  const runtime = await createPlaybackRuntime({
+    onFetchIndex() {
+      indexRequests += 1;
+    },
+  });
+  try {
+    runtime.start(1, 'speaker-mode');
+    await runtime.active('speaker-mode');
+
+    runtime.start(1, 'binaural-d1', 'A', 1, {renderer: 'binaural', hrtf: 'sadie-ii-d1-ku100'});
+    await runtime.active('binaural-d1');
+    assert.equal(runtime.messages.some(message => message.requestId === 'binaural-d1' && message.phase === 'ready'), false);
+
+    runtime.start(1, 'binaural-d2', 'A', 1, {renderer: 'binaural', hrtf: 'sadie-ii-d2-kemar'});
+    await runtime.active('binaural-d2');
+    assert.equal(runtime.messages.some(message => message.requestId === 'binaural-d2' && message.phase === 'ready'), false);
+    assert.equal(indexRequests, 1, 'renderer changes should not refetch the unchanged media index');
+  } finally {
+    runtime.close();
+  }
+});
+
+test('fetches a fresh media index when the signed candidate URLs change', async () => {
+  let indexRequests = 0;
+  const runtime = await createPlaybackRuntime({
+    onFetchIndex() {
+      indexRequests += 1;
+    },
+  });
+  try {
+    runtime.start(1, 'speaker-signed-url');
+    await runtime.active('speaker-signed-url');
+    const refreshedCandidate = {
+      id: 'dolby', source: 'dolby', codecs: 'ec-3', mimeType: 'audio/mp4', bandwidth: 1_000_000,
+      baseUrl: 'https://media.bilivideo.com/refreshed-audio.m4s', backupUrls: [],
+    };
+    runtime.start(1, 'binaural-refreshed-url', 'A', 1, {renderer: 'binaural', candidate: refreshedCandidate});
+    await runtime.active('binaural-refreshed-url');
+    assert.equal(indexRequests, 2, 'a refreshed signed URL must get its own current index');
+  } finally {
+    runtime.close();
+  }
+});
+
+test('keeps the active AudioContext running during an in-place renderer change', async () => {
+  let suspendCalls = 0;
+  let resumeCalls = 0;
+  const runtime = await createPlaybackRuntime({
+    onAudioContextResume() {
+      resumeCalls += 1;
+    },
+    onAudioContextSuspend() {
+      suspendCalls += 1;
+    },
+  });
+  try {
+    runtime.start(1, 'speaker-before-transition');
+    await runtime.active('speaker-before-transition');
+    const resumesBeforeTransition = resumeCalls;
+
+    runtime.start(1, 'binaural-after-transition', 'A', 1, {renderer: 'binaural', hrtf: 'sadie-ii-d1-ku100'});
+    await runtime.active('binaural-after-transition');
+    assert.equal(suspendCalls, 0, 'an active media transition should not suspend the shared AudioContext');
+    assert.equal(resumeCalls, resumesBeforeTransition, 'an already-running AudioContext should not be resumed again');
+  } finally {
+    runtime.close();
+  }
+});
+
+test('starts binaural HRTF loading while the first replacement segment is still fetching', async () => {
+  let releaseSegment;
+  let markSegmentStarted;
+  let shouldBlockSegment = false;
+  let hrtfAssetRequested = false;
+  const segmentGate = new Promise(resolve => {releaseSegment = resolve;});
+  const segmentStarted = new Promise(resolve => {markSegmentStarted = resolve;});
+  const runtime = await createPlaybackRuntime({
+    segments: 1,
+    async onFetchSegment() {
+      if (!shouldBlockSegment) return undefined;
+      shouldBlockSegment = false;
+      markSegmentStarted();
+      await segmentGate;
+      return undefined;
+    },
+    onHrtfAssetFetch() {
+      hrtfAssetRequested = true;
+    },
+  });
+  try {
+    runtime.start(1, 'speaker-before-preparation');
+    await runtime.active('speaker-before-preparation');
+    shouldBlockSegment = true;
+    runtime.start(1, 'binaural-preparation', 'A', 1, {renderer: 'binaural', hrtf: 'sadie-ii-d1-ku100'});
+    await segmentStarted;
+    await waitFor(() => hrtfAssetRequested, 'the HRTF asset fetch to begin before the segment fetch completes', 2_000);
+    releaseSegment();
+    await runtime.active('binaural-preparation');
+  } finally {
+    releaseSegment();
+    runtime.close();
+  }
+});
+
 test('automatic next item replaces a running decoder without a disable-enable click', async () => {
   const runtime = await createPlaybackRuntime();
   try {

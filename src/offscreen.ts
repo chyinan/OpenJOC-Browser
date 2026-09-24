@@ -70,6 +70,11 @@ type Session = {
 
 type StartRequest = Extract<RuntimeMessage, {target: 'offscreen'; type: 'start'}>;
 type PendingStart = {readonly token: number; readonly request: StartRequest; gainDb: number};
+type StopSessionOptions = Readonly<{
+  readonly announce: boolean;
+  readonly target?: MediaSessionTarget | null;
+  readonly suspendAudio?: boolean;
+}>;
 
 type PendingProgress = {
   readonly session: Session;
@@ -540,20 +545,35 @@ function validatePageRangeResponse(response: PageRangeResponse, start: number, e
 
 async function startSession(request: StartRequest, token: number): Promise<void> {
   const previous = currentSession;
-  const isSamePlaybackRequest = previous !== null
+  const isSamePlaybackSession = previous !== null
     && previous.request.tabId === request.tabId
-    && previous.request.requestId === request.requestId
     && previous.request.generation === request.generation
     && mediaKeyEquals(previous.request.mediaKey, request.mediaKey);
-  const preservedPlayerState = isSamePlaybackRequest ? {
+  const reusableIndex = isSamePlaybackSession
+    && previous?.isJocConfirmed === true
+    && previous.index !== null
+    && previous.request.pageUrl === request.pageUrl
+    && previous.request.candidate.id === request.candidate.id
+    && previous.request.candidate.source === request.candidate.source
+    && previous.request.candidate.codecs === request.candidate.codecs
+    && previous.request.candidate.mimeType === request.candidate.mimeType
+    && previous.request.candidate.baseUrl === request.candidate.baseUrl
+    && previous.request.candidate.backupUrls.length === request.candidate.backupUrls.length
+    && previous.request.candidate.backupUrls.every((url, index) => url === request.candidate.backupUrls[index])
+    ? previous.index
+    : null;
+  const preservedPlayerState = isSamePlaybackSession ? {
     playerVolume: previous.playerVolume,
     playerMuted: previous.playerMuted,
     isNativeMuted: previous.isNativeMuted,
     activationPending: previous.activationPending,
   } : null;
-  await stopSession(currentSession !== null && currentSession.request.tabId !== request.tabId);
+  await stopSession({
+    announce: currentSession !== null && currentSession.request.tabId !== request.tabId,
+    suspendAudio: !isSamePlaybackSession,
+  });
   if (token !== latestStartToken || pendingStart?.token !== token) return;
-  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: preservedPlayerState?.playerVolume ?? 1, playerMuted: preservedPlayerState?.playerMuted ?? false, index: null, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: preservedPlayerState?.isNativeMuted ?? false, activationPending: preservedPlayerState?.activationPending ?? false, isJocConfirmed: false, isPaused: request.paused, isBuffering: request.buffering, phase: request.buffering ? 'buffering' : request.paused ? 'paused' : 'preparing', stage: 'starting-audio', preparationTimer: null};
+  const session: Session = {request, audioGeneration: ++lastAudioGeneration, abort: new AbortController(), gainDb: pendingStart.gainDb, playerVolume: preservedPlayerState?.playerVolume ?? 1, playerMuted: preservedPlayerState?.playerMuted ?? false, index: reusableIndex, nextReferenceIndex: 0, windowEndSamples: request.videoTimeSamples, isStreaming: false, isNativeMuted: preservedPlayerState?.isNativeMuted ?? false, activationPending: preservedPlayerState?.activationPending ?? false, isJocConfirmed: false, isPaused: request.paused, isBuffering: request.buffering, phase: request.buffering ? 'buffering' : request.paused ? 'paused' : 'preparing', stage: 'starting-audio', preparationTimer: null};
   currentSession = session;
   resetPreparationTimer(session, PREPARATION_TIMEOUT_MS);
   latestVideoMediaSamples = request.videoTimeSamples;
@@ -567,13 +587,15 @@ async function startSession(request: StartRequest, token: number): Promise<void>
   audioNode?.port.postMessage({type: 'clock', generation: session.audioGeneration, mediaTimeSamples: request.videoTimeSamples, paused: session.isPaused, buffering: session.isBuffering});
   applyOutputGain(session, true);
   if (session.isNativeMuted) audioNode?.port.postMessage({type: 'arm', generation: session.audioGeneration});
-  await context.resume();
+  if (context.state !== 'running') await context.resume();
   sendStatus('preparing', null, session);
   try {
-    session.stage = 'fetching-index';
-    session.index = await fetchIndexWithFallback(request, session.abort.signal, (stage): void => {
-      if (isCurrentSession(session)) session.stage = stage;
-    });
+    if (session.index === null) {
+      session.stage = 'fetching-index';
+      session.index = await fetchIndexWithFallback(request, session.abort.signal, (stage): void => {
+        if (isCurrentSession(session)) session.stage = stage;
+      });
+    }
     if (!isCurrentSession(session)) return;
     const references = selectCmafSegmentWindow(session.index.index, request.videoTimeSamples, MAX_SEGMENTS_PER_WINDOW);
     if (references.length === 0) throw new Error('Bilibili JOC stream has no segment at the current video time');
@@ -581,6 +603,15 @@ async function startSession(request: StartRequest, token: number): Promise<void>
     if (firstReference === undefined) throw new Error('Bilibili JOC stream has no segment at the current video time');
     session.nextReferenceIndex = session.index.index.references.indexOf(firstReference);
     session.windowEndSamples = references[references.length - 1]?.ptsSamples ?? request.videoTimeSamples;
+    if (request.renderer === 'binaural') {
+      ensureWorker().postMessage({
+        type: 'prepare-cmaf-decoder',
+        generation: session.audioGeneration,
+        dialnorm: request.dialnorm,
+        renderer: request.renderer,
+        hrtf: request.hrtf,
+      } satisfies WorkerCommand);
+    }
     void pumpSegments(session);
   } catch (error: unknown) {
     if (!session.abort.signal.aborted) await failSession(error instanceof Error ? error.message : 'failed to prepare Bilibili CMAF media');
@@ -624,7 +655,7 @@ function enqueueStopSession(announce: boolean, target: MediaSessionTarget): void
   startOperationTail = startOperationTail
     .catch(() => undefined)
     .then(async(): Promise<void> => {
-      await stopSession(announce, target);
+      await stopSession({announce, target});
     })
     .catch((error: unknown): void => {
       void failSession(error instanceof Error ? error.message : 'failed to stop OpenJOC Bilibili playback');
@@ -668,7 +699,8 @@ function toError(error: unknown, fallback: string): Error {
   return new Error(fallback);
 }
 
-async function stopSession(announce: boolean, target: MediaSessionTarget | null = null): Promise<void> {
+async function stopSession(options: StopSessionOptions): Promise<void> {
+  const {announce, target = null, suspendAudio = true} = options;
   const session = currentSession;
   if (session === null) return;
   if (target !== null && !sessionTargetMatches(sessionTarget(session), target)) return;
@@ -677,7 +709,7 @@ async function stopSession(announce: boolean, target: MediaSessionTarget | null 
   session.preparationTimer = null;
   currentSession = null;
   resetAudio(++lastAudioGeneration);
-  if (audioContext !== null) await audioContext.suspend();
+  if (suspendAudio && audioContext !== null) await audioContext.suspend();
   if (announce) sendStatus('disabled', null, session);
 }
 
