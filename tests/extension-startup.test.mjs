@@ -8,6 +8,8 @@ import {createNativeAudioRuntime} from './helpers/native-audio-runtime.mjs';
 /** Real content -> background -> offscreen -> worker -> AudioWorklet, with a local media fixture. */
 async function createExtension(options = {}) {
   const backgroundListeners = [];
+  const tabRemovedListeners = [];
+  const contentSenderId = Object.hasOwn(options, 'contentSenderId') ? options.contentSenderId : 'openjoc-test';
   const pages = new Map();
   const messages = [];
   let playback;
@@ -33,7 +35,11 @@ async function createExtension(options = {}) {
         playback.dispatch(message);
       },
     },
-    tabs: {async sendMessage(tabId, message) {messages.push(message); pages.get(tabId)?.receive(message);}},
+    storage: {local: {
+      async get() {return {...preferences};},
+      async set(value) {preferences = {...preferences, ...value};},
+    }},
+    tabs: {async sendMessage(tabId, message) {messages.push(message); pages.get(tabId)?.receive(message);}, onRemoved: {addListener(listener) {tabRemovedListeners.push(listener);}}},
     offscreen: {async createDocument() {playback = await newPlayback(); documentExists = true;}, async closeDocument() {playback.close(); documentExists = false;}},
   }});
   await background.load('service-worker.js');
@@ -46,6 +52,11 @@ async function createExtension(options = {}) {
 
   return {
     messages,
+    get preferences() {return {...preferences};},
+    closeTab(tabId) {
+      pages.delete(tabId);
+      for (const listener of tabRemovedListeners) listener(tabId, {windowId: 1, isWindowClosing: false});
+    },
     loseOffscreen() {playback.close(); documentExists = false;},
     get outputGain() {return playback.outputGain;},
     get gainAutomation() {return playback.gainAutomation;},
@@ -60,6 +71,7 @@ async function createExtension(options = {}) {
       }
     },
     async page(documentId, pageOptions = {}) {
+      const tabId = pageOptions.tabId ?? 1;
       const nativeAudio = await createNativeAudioRuntime();
       const listeners = [];
       const windowEvents = new Map();
@@ -75,6 +87,7 @@ async function createExtension(options = {}) {
       let uiDialnorm = 'calibrated';
       let uiRenderer = 'stereo-speakers';
       let uiGainDb = 0;
+      let uiAlwaysEnabled = false;
       const video = Object.assign(nativeAudio.video, {
         paused: pageOptions.paused ?? false, seeking: false, muted: pageOptions.muted ?? false, defaultMuted: false, volume: 1,
         currentTime: 0, readyState: 4, playbackRate: 1, clientWidth: 1280, clientHeight: 720,
@@ -95,10 +108,11 @@ async function createExtension(options = {}) {
         get uiDialnorm() {return uiDialnorm;},
         get uiRenderer() {return uiRenderer;},
         get uiGainDb() {return uiGainDb;},
+        get uiAlwaysEnabled() {return uiAlwaysEnabled;},
         receive(message) {for (const listener of listeners) listener(message, {id: 'openjoc-test'});},
         enable() {callbacks.onEnable({dialnorm: uiDialnorm, renderer: uiRenderer});},
         disable() {callbacks.onDisable();},
-        alwaysEnable() {callbacks.onAlwaysEnabledChange(true);},
+        alwaysEnable() {uiAlwaysEnabled = true; callbacks.onAlwaysEnabledChange(true);},
         dialnorm(mode) {uiDialnorm = mode; callbacks.onDialnormChange(mode);},
         renderer(mode) {uiRenderer = mode; callbacks.onRendererChange(mode);},
         gain(gainDb) {uiGainDb = gainDb; callbacks.onGainChange(gainDb);},
@@ -124,7 +138,7 @@ async function createExtension(options = {}) {
           }, `${documentId} to play PCM through the full message chain`);
         },
       };
-      pages.set(1, page);
+      pages.set(tabId, page);
       const content = createSourceRuntime({
         window: pageWindow, location: {href: 'https://www.bilibili.com/video/BVA/'}, console: {info() {}},
         performance: {now: () => performance.now() + clockOffsetMs},
@@ -136,7 +150,16 @@ async function createExtension(options = {}) {
               messages.push(message);
               if (message.type === 'start') currentRequestId = message.requestId;
               if (message.type === 'start' && shouldDropNextStart) {shouldDropNextStart = false; return;}
-              for (const listener of backgroundListeners) listener(message, {id: 'openjoc-test', tab: {id: 1}, documentId});
+              if (message.type === 'load-playback-preferences' && options.blockPreferenceRead) return new Promise(() => {});
+              return new Promise(resolve => {
+                let awaitingResponse = false;
+                let responded = false;
+                const sendResponse = response => {responded = true; resolve(response);};
+                for (const listener of backgroundListeners) {
+                  if (listener(message, {id: contentSenderId, tab: {id: tabId}, documentId}, sendResponse) === true) awaitingResponse = true;
+                }
+                if (!awaitingResponse && !responded) resolve(undefined);
+              });
             },
           },
           storage: {local: {
@@ -147,7 +170,7 @@ async function createExtension(options = {}) {
       }, {'joc-overlay-controller.js': {createJocOverlayController(options) {
         callbacks = options;
         return {
-          reset() {}, setManifest(value) {hasCandidate = value;}, setAlwaysEnabled() {preferencesRestored = true;},
+          reset() {}, setManifest(value) {hasCandidate = value;}, setAlwaysEnabled(value) {uiAlwaysEnabled = value; preferencesRestored = true;},
           setDialnorm(value) {uiDialnorm = value;},
           setRenderer(value) {uiRenderer = value;},
           setGainDb(value) {uiGainDb = value;}, setLanguage() {},
@@ -155,7 +178,7 @@ async function createExtension(options = {}) {
         };
       }}});
       await content.load('bilibili-content.js');
-      if (typeof options.beforeReadPreferences === 'function') await new Promise(setImmediate);
+      if (typeof options.beforeReadPreferences === 'function' || options.blockPreferenceRead) await new Promise(setImmediate);
       else await waitFor(() => preferencesRestored, `${documentId} playback preferences to restore`);
       return page;
     },
@@ -181,6 +204,34 @@ test('manual first play followed by saved automatic enable on repeated refreshes
   } finally {
     extension.close();
   }
+});
+
+test('saved automatic enable and gain survive closing a video tab before opening another video tab', async () => {
+  const extension = await createExtension({contentSenderId: undefined});
+  try {
+    const first = await extension.page('first-video', {tabId: 11});
+    first.manifest(); first.enable(); await first.active();
+    first.alwaysEnable(); first.gain(6);
+    await waitFor(() => extension.preferences.alwaysEnableOpenJoc === true && extension.preferences.outputGainDb === 6, 'both preferences to persist');
+    extension.closeTab(11);
+    await waitFor(() => extension.messages.some(message => message.target === 'offscreen' && message.type === 'disable' && message.tabId === 11), 'closed tab playback to stop');
+
+    const next = await extension.page('other-video', {tabId: 12});
+    assert.equal(next.uiAlwaysEnabled, true);
+    assert.equal(next.uiGainDb, 6);
+    next.manifest(); next.tick(); await next.active();
+    assert.equal(next.requested, true);
+  } finally {extension.close();}
+});
+
+test('local saved preferences restore when the background preference read never replies', async () => {
+  const extension = await createExtension({preferences: {alwaysEnableOpenJoc: true, outputGainDb: 20}, blockPreferenceRead: true});
+  try {
+    const page = await extension.page('unanswered-preference-read');
+    await new Promise(setImmediate);
+    assert.equal(page.uiAlwaysEnabled, true);
+    assert.equal(page.uiGainDb, 20);
+  } finally {extension.close();}
 });
 
 test('overseas Akamai JOC candidate starts through the full extension chain', async () => {

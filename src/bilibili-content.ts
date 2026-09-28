@@ -136,13 +136,13 @@ const overlay: JocOverlayController = createJocOverlayController({
     alwaysEnabledPreferenceChanged = true;
     alwaysEnableOpenJoc = enabled;
     alwaysEnableAutoStartPending = enabled;
-    void chrome.storage.local.set({[ALWAYS_ENABLED_STORAGE_KEY]: enabled}).catch(() => undefined);
+    send({target: 'background', type: 'save-preference', key: ALWAYS_ENABLED_STORAGE_KEY, value: enabled});
     maybeEnableAlways();
   },
   onGainChange: (gainDb): void => {
     outputGainPreferenceChanged = true;
     outputGainDb = normalizeOutputGainDb(gainDb);
-    void chrome.storage.local.set({[OUTPUT_GAIN_STORAGE_KEY]: outputGainDb}).catch(() => undefined);
+    send({target: 'background', type: 'save-preference', key: OUTPUT_GAIN_STORAGE_KEY, value: outputGainDb});
     if (isOpenJocRequested && activeStartRequestId !== null) {
       send({target: 'background', type: 'output-gain', requestId: activeStartRequestId, generation: videoGeneration, gainDb: outputGainDb});
     }
@@ -477,8 +477,8 @@ async function restorePlaybackPreferences(): Promise<void> {
       overlay.setAlwaysEnabled(alwaysEnableOpenJoc);
     }
     traceLifecycle('preference-restored', {alwaysEnabled: alwaysEnableOpenJoc, dialnorm: dialnormMode, renderer: rendererMode, hrtf: hrtfPreset, gainDb: outputGainDb, language: overlayLanguage});
-  } catch {
-    // Keep the in-memory default when storage is unavailable.
+  } catch (error: unknown) {
+    traceLifecycle('preference-restore-failed', {reason: error instanceof Error ? error.message : String(error)});
   } finally {
     playbackPreferencesLoaded = true;
     const manualEnable = deferredManualEnable;

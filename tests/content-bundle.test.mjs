@@ -19,10 +19,10 @@ function compileSources(targetDirectory) {
   assert.equal(result.status, 0, `the extension sources compile: ${result.stdout}${result.stderr}`);
 }
 
-function contentScriptGlobals() {
+function contentScriptGlobals(storedPreferences = {}) {
   const element = () => ({
-    dataset: {}, className: '', hidden: false, innerHTML: '', textContent: '', style: {},
-    classList: {toggle() {}, add() {}, remove() {}}, addEventListener() {}, append() {}, setAttribute() {},
+    dataset: {}, className: '', hidden: false, innerHTML: '', textContent: '', style: {}, children: [],
+    classList: {toggle() {}, add() {}, remove() {}}, addEventListener() {}, append(...children) {this.children.push(...children);}, setAttribute() {},
     attachShadow() {return element();}, querySelector() {return null;}, querySelectorAll() {return [];},
   });
   const listeners = [];
@@ -51,7 +51,7 @@ function contentScriptGlobals() {
         onMessage: {addListener() {}},
         sendMessage: async () => undefined,
       },
-      storage: {local: {get: async () => ({}), set: async () => undefined}},
+      storage: {local: {get: async () => ({...storedPreferences}), set: async () => undefined}},
     },
   };
 }
@@ -101,6 +101,25 @@ test('the content-script bundle initializes against a page with both interface l
     assert.equal(i18n.overlayMessage('en', 'languageField'), 'Language', 'the shipped bundle carries the English catalogue');
     assert.equal(i18n.overlayMessage('zh-CN', 'languageField'), '语言 / Language', 'the shipped bundle carries the bilingual default language label');
     assert.equal(i18n.overlayMessage('ja', 'languageField'), '言語', 'the shipped bundle carries the Japanese catalogue');
+  } finally {
+    rmSync(target, {recursive: true, force: true});
+  }
+});
+
+test('the shipped content bundle restores saved always-enable and output gain on a fresh page', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'openjoc-bundle-'));
+  try {
+    compileSources(target);
+    const bundle = createContentBundle(target);
+    const globals = contentScriptGlobals({alwaysEnableOpenJoc: true, outputGainDb: 20});
+    const context = vm.createContext({...globals, URL, crypto, performance, setTimeout, clearTimeout});
+    new vm.Script(bundle).runInContext(context);
+    await new Promise(setImmediate);
+    const panel = globals.document.documentElement.children.find(child => child.dataset.openjoc === 'control');
+    assert.ok(panel, 'the content script creates its overlay');
+    const state = JSON.parse(panel.dataset.openjocState);
+    assert.equal(state.alwaysEnabled, true, panel.dataset.debug);
+    assert.equal(state.gainDb, 20, panel.dataset.debug);
   } finally {
     rmSync(target, {recursive: true, force: true});
   }

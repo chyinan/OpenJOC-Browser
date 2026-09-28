@@ -72,6 +72,8 @@ export type PlaybackMetrics = Readonly<{
 export type RuntimeMessage =
   | Readonly<{target: 'background'; type: 'toggle'}>
   | Readonly<{target: 'background'; type: 'document-active'}>
+  | Readonly<{target: 'background'; type: 'save-preference'; key: 'alwaysEnableOpenJoc'; value: boolean}>
+  | Readonly<{target: 'background'; type: 'save-preference'; key: 'outputGainDb'; value: number}>
   | Readonly<{target: 'background'; type: 'request-session'; force?: boolean; requestId?: string; generation?: number}>
   | Readonly<{target: 'background'; type: 'request-manifest'; pageUrl: string}>
   | Readonly<{target: 'background'; type: 'custom-sofa-query'; revision?: string | null}>
@@ -123,6 +125,11 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   if (!isRecord(value) || typeof value.target !== 'string' || typeof value.type !== 'string') return false;
   if (value.target === 'background' && value.type === 'toggle') return true;
   if (value.target === 'background' && value.type === 'document-active') return true;
+  if (value.target === 'background' && value.type === 'save-preference') {
+    if (value.key === 'alwaysEnableOpenJoc') return typeof value.value === 'boolean';
+    if (value.key === 'outputGainDb') return isOutputGainDb(value.value);
+    return false;
+  }
   if (value.type === 'output-gain' && (value.target === 'background' || value.target === 'offscreen')) {
     return isNonEmptyString(value.requestId) && isGeneration(value.generation) && isOutputGainDb(value.gainDb)
       && (value.target === 'background' || isTabId(value.tabId));

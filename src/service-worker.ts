@@ -463,8 +463,42 @@ chrome.action.onClicked.addListener((tab: ChromeTab): void => {
   void chrome.tabs.sendMessage(tab.id, {target: 'background', type: 'toggle'}).catch(() => undefined);
 });
 
+chrome.tabs.onRemoved.addListener((tabId: number): void => {
+  enqueueLifecycleOperation(tabId, async(): Promise<void> => {
+    const session = sessions.get(tabId);
+    sessions.delete(tabId);
+    pendingHrtfSwitches.delete(tabId);
+    activeDocumentIds.delete(tabId);
+    for (const [requestId, pending] of pendingPageRanges) {
+      if (pending.tabId === tabId) pendingPageRanges.delete(requestId);
+    }
+    if (session?.started === true) {
+      await sendToOffscreen({target: 'offscreen', type: 'disable', tabId, mediaKey: session.mediaKey, generation: session.generation});
+    }
+  });
+});
+
 chrome.runtime.onMessage.addListener((rawMessage: unknown, sender: ChromeMessageSender): void => {
   if (sender.id === chrome.runtime.id && isLegacyOffscreenStatus(rawMessage)) recoverLegacyOffscreen(rawMessage.tabId);
+});
+
+chrome.runtime.onMessage.addListener((
+  rawMessage: unknown,
+  sender: ChromeMessageSender,
+  sendResponse: (response: unknown) => void,
+): boolean | void => {
+  if (!isRuntimeMessage(rawMessage) || rawMessage.target !== 'background' || rawMessage.type !== 'save-preference') return;
+  if ((sender.id !== undefined && sender.id !== chrome.runtime.id) || tabIdFromSender(sender) === null) {
+    sendResponse({ok: false, error: 'preference requests must come from an OpenJOC tab'});
+    return;
+  }
+  void chrome.storage.local.set({[rawMessage.key]: rawMessage.value})
+    .then(() => sendResponse({ok: true}))
+    .catch((error: unknown) => sendResponse({
+      ok: false,
+      error: error instanceof Error ? error.message : 'failed to save OpenJOC preference',
+    }));
+  return true;
 });
 
 chrome.runtime.onMessage.addListener((

@@ -52,6 +52,9 @@ declare const chrome: {
     create(options: Readonly<{url: string}>): void;
     query(options: Readonly<{active: boolean; lastFocusedWindow: boolean}>): Promise<ReadonlyArray<ChromeTab>>;
     sendMessage(tabId: number, message: unknown): Promise<unknown>;
+    readonly onRemoved: {
+      addListener(listener: (tabId: number, removeInfo: Readonly<{windowId: number; isWindowClosing: boolean}>) => void): void;
+    };
   };
   readonly offscreen: {
     createDocument(options: Readonly<{url: string; reasons: ReadonlyArray<'AUDIO_PLAYBACK'>; justification: string}>): Promise<void>;

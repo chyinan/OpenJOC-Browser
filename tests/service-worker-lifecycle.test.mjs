@@ -29,7 +29,7 @@ async function createBackground(options = {}) {
       },
       async set(items) {Object.assign(storageData, items);},
     }},
-    tabs: {async sendMessage(tabId, message) {replies.push(message);}},
+    tabs: {async sendMessage(tabId, message) {replies.push(message);}, onRemoved: {addListener() {}}},
     offscreen: {async createDocument() {documentExists = true;}, async closeDocument() {documentExists = false;}},
   }}, options.replacements ?? {});
   await runtime.load('service-worker.js');
