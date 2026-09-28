@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-09-28
+
+### Fixed
+
+- Stopped JOC audio when its Bilibili video tab closes instead of allowing queued audio to continue in the background.
+- Restored the saved Always enable OpenJOC setting and output gain after page reloads and when opening videos in another tab.
+- Fixed missing HRTF helper references in the packaged content script that aborted preference restoration.
+
 ## [0.1.7] - 2026-09-25
 
 ### Added
