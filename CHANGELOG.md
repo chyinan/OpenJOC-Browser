@@ -4,6 +4,10 @@
 
 ## [0.1.8] - 2026-09-28
 
+### Changed
+
+- Updated the pinned decoder source to the latest OpenJOC v0.18.0 revision.
+
 ### Fixed
 
 - Stopped JOC audio when its Bilibili video tab closes instead of allowing queued audio to continue in the background.
