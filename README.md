@@ -25,6 +25,10 @@ The first public release targets Microsoft Edge and Google Chrome. The primary s
 
 The extension package includes both D1 and D2. Either profile is available offline immediately after installation; the selected asset is checked against its packaged size and SHA-256 before use.
 
+Custom SOFA imports local NetCDF classic CDF-1 or NetCDF-4/HDF5 files in OpenJOC's strict `SimpleFreeFieldHRIR` subset (SOFA conventions 1.0–1.2). The selected HRTF must cover the fixed 7.1.4 virtual layout through exact directions or supported interpolation. Source rates are converted to 48 kHz with a bounded windowed-sinc filter; matching 48 kHz taps are preserved bit-for-bit. Conversion ratios above 16:1 and fractional source delays are rejected. The added common filter delay is included in reported renderer latency.
+
+The WASM importer limits files to 16 MiB, measurements to 4096, source IRs to 8192 taps per receiver, delays to 8192 samples, and the expanded bank to one million coefficients. Oversized HDF5 chunks are rejected before decompression. Imported bytes are checked by SHA-256 and kept in local IndexedDB for later sessions; files are never uploaded.
+
 ## How it works
 
 ```text
@@ -151,7 +155,11 @@ OpenJOC-Browser 通过 WebAssembly 和 Web Audio，将 OpenJOC 的 E-AC-3 JOC �
 
 扩展包同时包含 D1 和 D2。安装后两套配置都可立即离线使用；加载前会按包内声明的文件大小和 SHA-256 校验所选资源。
 
-选择 Custom SOFA… 可从本地导入文件。当前支持 OpenJOC 严格解析的 NetCDF CDF-1 `SimpleFreeFieldHRIR` SOFA，采样率为 48 kHz，文件上限为 16 MiB；WASM 还限制展开后的 HRIR 系数总量为一百万，并拒绝过大的方向数、IR 长度或 Delay。导入数据会按 SHA-256 保存在本机扩展 IndexedDB 中，以供后续会话使用；不会上传。
+选择 Custom SOFA… 可从本地导入文件。当前支持 NetCDF classic CDF-1 和 NetCDF-4/HDF5 容器中的 `SimpleFreeFieldHRIR` 子集，SOFA 约定版本为 1.0–1.2。HRTF 必须能精确覆盖固定的 7.1.4 虚拟布局，或在支持范围内插值到这些方向。
+
+浏览器会把 HRIR 转换到 48 kHz。源采样率已是 48 kHz 时，tap 系数逐位保持不变；其他采样率采用有界窗函数 sinc 转换，比例超过 16:1 时拒绝处理。转换会增加两耳共用的因果滤波延迟，并计入延迟报告。分数源延迟仍不受支持。
+
+WASM 导入限制：文件最大 16 MiB、测量点最多 4096 个、每个接收器的原始 IR 最多 8192 个采样点、源 Delay 最多 8192 个采样点、展开后的 HRIR 系数总数最多一百万。HDF5 chunk 还受解压内存预算限制；超限 chunk 会在解压前拒绝。导入数据按 SHA-256 校验，并保存在本机扩展 IndexedDB 中供后续会话使用；文件不会上传。
 
 ## 工作原理
 

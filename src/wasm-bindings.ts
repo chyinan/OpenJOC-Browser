@@ -305,7 +305,7 @@ export class WasmDecoderClient {
     }
     if (this.handle === 0) {
       if (renderer === 1 && hrtf === 'custom-sofa') {
-        throw new Error('failed to initialize Custom SOFA; use a compatible 48 kHz NetCDF CDF-1 SimpleFreeFieldHRIR dataset with 7.1.4 direction coverage');
+        throw new Error('failed to initialize Custom SOFA; use a supported CDF-1 or NetCDF-4/HDF5 SimpleFreeFieldHRIR file with 7.1.4 coverage, integer source delays, and a sample-rate ratio within 16:1');
       }
       throw new Error('failed to create OpenJOC WASM decoder');
     }

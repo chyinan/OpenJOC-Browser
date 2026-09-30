@@ -22,7 +22,11 @@ Under **节目电平**, the current options are:
 
 Binaural uses a fixed virtual 7.1.4 layout. The selector offers **SADIE II — KU100** (Default / Reference), **SADIE II — KEMAR**, and **Custom SOFA…** at the bottom. Different listeners may prefer different non-individual HRTFs because perception depends strongly on individual anatomy; no profile is best for everyone.
 
-The extension package includes D1 and D2, and both work offline immediately after installation. Selecting a built-in profile loads its packaged asset and verifies its size and SHA-256 before renderer preparation; no HRTF download is required. Custom SOFA opens a local file picker. The supported input is OpenJOC's strict NetCDF CDF-1 `SimpleFreeFieldHRIR` SOFA at 48 kHz, up to 16 MiB. Browser WASM also limits the expanded HRIR bank to one million coefficients and rejects excessive measurement counts, FIR lengths, and delays even when the file itself is below 16 MiB. The extension verifies and stores imported bytes by SHA-256 in local IndexedDB for later sessions; the file is not uploaded. Head tracking and virtual 9.1.6 are not exposed.
+The extension package includes D1 and D2, and both work offline immediately after installation. Selecting a built-in profile loads its packaged asset and verifies its size and SHA-256 before renderer preparation; no HRTF download is required.
+
+Custom SOFA opens a local file picker. It accepts NetCDF classic CDF-1 or NetCDF-4/HDF5 containers in OpenJOC's strict `SimpleFreeFieldHRIR` subset (SOFA conventions 1.0–1.2). The selected HRTF must cover the fixed 7.1.4 virtual layout through exact directions or supported interpolation. HRIRs are converted to 48 kHz with a bounded windowed-sinc filter. Matching-rate taps are preserved bit-for-bit; conversion ratios above 16:1 and fractional source delays are rejected. The added common filter delay is included in reported renderer latency.
+
+Browser WASM limits files to 16 MiB, measurements to 4096, source IRs to 8192 taps per receiver, delays to 8192 samples, and the expanded HRIR bank to one million coefficients. Oversized HDF5 chunks are rejected before decompression. Imported bytes are checked by SHA-256 and stored in local IndexedDB for later sessions; files are never uploaded. Head tracking and virtual 9.1.6 are not exposed.
 
 ## Custom output gain
 
