@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are currently made against the latest release and the default development branch. The v0.1.0 package is a developer-loaded Chromium extension and should be treated as an early public release.
+Security fixes are currently made against the latest release and the default development branch. The Chromium package is developer-loaded and is not distributed through the Chrome Web Store or Microsoft Edge Add-ons.
 
 ## Reporting a vulnerability
 

@@ -47,14 +47,14 @@ The browser code handles page integration, media URL policy, ISO-BMFF transport 
 
 ## Install from a GitHub release
 
-When a GitHub release is available, download `OpenJOC-Browser-v0.1.0-chromium-standard.zip` from its Assets and extract it. The extracted top-level directory is the loadable extension root.
+When a GitHub release is available, download its matching `OpenJOC-Browser-vX.Y.Z-chromium-standard.zip` asset and extract it. The extracted `OpenJOC-Browser-vX.Y.Z/` directory is the loadable extension root; use the version from the release asset name.
 
 For Microsoft Edge:
 
 1. Open `edge://extensions`.
 2. Enable Developer mode.
 3. Choose **Load unpacked**.
-4. Select the extracted `OpenJOC-Browser-v0.1.0/` directory—the directory containing `manifest.json`.
+4. Select the extracted `OpenJOC-Browser-vX.Y.Z/` directory for that release—the directory containing `manifest.json`.
 
 For Google Chrome, use the same steps at `chrome://extensions`.
 
@@ -79,7 +79,7 @@ See [usage](docs/usage.md) and [diagnostics](docs/diagnostics.md).
 
 ## Scope and limitations
 
-The v0.1.0 implementation targets:
+The current implementation targets:
 
 - Microsoft Edge and Google Chrome on Chromium's extension platform.
 - Standard Bilibili VOD pages.
@@ -108,8 +108,8 @@ npm run check:wasm
 npm run check
 npm test
 npm run build
-npm run package:release -- --version 0.1.0
-npm run validate:release -- --version 0.1.0
+npm run package:release
+npm run validate:release
 ```
 
 The generated extension is written to `extension/`. The release ZIP is written to `release/`. See [development](docs/development.md) for the exact toolchain, parity gates, browser QA, and an explicit local-source override.
@@ -179,14 +179,14 @@ Bilibili 页面
 
 ## 从 GitHub release 安装
 
-有可用的 GitHub release 时，请下载 `OpenJOC-Browser-v0.1.0-chromium-standard.zip` 并解压。解压后的顶层目录就是可加载的扩展根目录；其中已包含 D1 和 D2 两套内置 HRTF。
+有可用的 GitHub release 时，请下载对应版本的 `OpenJOC-Browser-vX.Y.Z-chromium-standard.zip` 并解压。解压后的 `OpenJOC-Browser-vX.Y.Z/` 目录就是可加载的扩展根目录；其中已包含 D1 和 D2 两套内置 HRTF。请使用与 release 资产文件名一致的版本。
 
 在 Microsoft Edge 中：
 
 1. 打开 `edge://extensions`。
 2. 开启“开发人员模式”。
 3. 选择 **Load unpacked**。
-4. 选择解压后的 `OpenJOC-Browser-v0.1.0/` 目录，也就是包含 `manifest.json` 的目录。
+4. 选择该 release 对应版本的 `OpenJOC-Browser-vX.Y.Z/` 目录，也就是包含 `manifest.json` 的目录。
 
 在 Google Chrome 中，在 `chrome://extensions` 执行相同步骤。
 
@@ -211,7 +211,7 @@ Bilibili 页面
 
 ## 范围与限制
 
-v0.1.0 版本面向以下范围：
+当前实现面向以下范围：
 
 - Chromium 扩展平台上的 Microsoft Edge 和 Google Chrome；
 - 标准 Bilibili 视频点播页面；
@@ -240,8 +240,8 @@ npm run check:wasm
 npm run check
 npm test
 npm run build
-npm run package:release -- --version 0.1.0
-npm run validate:release -- --version 0.1.0
+npm run package:release
+npm run validate:release
 ```
 
 生成的扩展写入 `extension/`，release ZIP 写入 `release/`。确切的工具链、平行性检查、浏览器 QA 和显式的本地源码覆盖方式，请参阅[开发指南](docs/development.md)。

@@ -43,7 +43,7 @@ The workflow has `contents: write` only because creating a GitHub Release requir
 
 ```powershell
 npm ci
-npm run check:version -- v0.1.0
+npm run check:version
 npm run check:release-policy
 npm run check:wasm
 npm run check
@@ -52,11 +52,11 @@ npm run test:lifecycle
 npm run build
 npm run parity
 npm run cmaf-parity
-npm run package:release -- --version 0.1.0
-npm run validate:release -- --version 0.1.0
+npm run package:release
+npm run validate:release
 ```
 
-This is the local equivalent of the release job. It does not create a Git tag or GitHub Release.
+These commands use the current `package.json` version and verify that the extension manifest matches. This is the local equivalent of the release job. It does not create a Git tag or GitHub Release.
 
 ## Manifest review
 

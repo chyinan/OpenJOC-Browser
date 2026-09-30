@@ -2,12 +2,12 @@
 
 ## Prerequisites
 
-Users need a current desktop installation of Microsoft Edge or Google Chrome. The v0.1.0 package is an unpacked Chromium extension; it does not require Rust, Node.js, or an OpenJOC checkout.
+Users need a current desktop installation of Microsoft Edge or Google Chrome. The package is an unpacked Chromium extension; it does not require Rust, Node.js, or an OpenJOC checkout.
 
 ## Install from the release ZIP
 
-1. Download `OpenJOC-Browser-v0.1.0-chromium-standard.zip`. It includes both D1 and D2, so either built-in HRTF works offline after installation.
-2. Extract it. Open the extracted `OpenJOC-Browser-v0.1.0/` directory.
+1. Download the matching `OpenJOC-Browser-vX.Y.Z-chromium-standard.zip` release asset. It includes both D1 and D2, so either built-in HRTF works offline after installation.
+2. Extract it. Open the matching `OpenJOC-Browser-vX.Y.Z/` directory.
 3. Open `edge://extensions` in Edge or `chrome://extensions` in Chrome.
 4. Enable **Developer mode**.
 5. Select **Load unpacked**.
