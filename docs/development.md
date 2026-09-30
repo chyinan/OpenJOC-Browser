@@ -43,11 +43,11 @@ npm run cmaf-parity -- --binaural
 
 ```powershell
 npm run build
-npm run package:release -- --version 0.1.0
-npm run validate:release -- --version 0.1.0
+npm run package:release
+npm run validate:release
 ```
 
-The package script creates `OpenJOC-Browser-v0.1.0-chromium-standard.zip` with a directly loadable top-level directory, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, the WASM renderer, and both HRTF assets. It writes a sibling `.sha256` file. The validator checks that every supported preset is bundled, verifies both byte lengths and SHA-256 values, checks manifest references and notices, and verifies the ZIP checksum.
+The package script creates `OpenJOC-Browser-vX.Y.Z-chromium-standard.zip` using the version in `package.json`, with a directly loadable matching top-level directory, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, the WASM renderer, and both HRTF assets. It writes a sibling `.sha256` file. The validator defaults to the same package version and checks that every supported preset is bundled, verifies both byte lengths and SHA-256 values, checks manifest references and notices, and verifies the ZIP checksum.
 
 ## Local browser QA
 
