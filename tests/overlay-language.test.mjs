@@ -182,3 +182,36 @@ test('the advanced panel switches the whole controller between supported languag
   assert.ok(document.panelMarkup.includes('停用 OpenJOC'), 'the normal panel is Chinese again');
   assert.ok(document.panelMarkup.includes('高级 <small>技术信息</small>'), 'the advanced entry is Chinese again');
 });
+
+test('current and peak WASM memory diagnostics use separate decoder values', async () => {
+  const document = createFakeDocument();
+  const runtime = createSourceRuntime({document, window: {setTimeout() {return 1;}, clearTimeout() {}}, HTMLInputElement: FakeElement, HTMLSelectElement: FakeSelectElement, Element: FakeElement});
+  const {createJocOverlayController} = await runtime.load('joc-overlay-controller.js');
+  const controller = createJocOverlayController(createCallbacks([]));
+  controller.setLanguage('en');
+  const metrics = {
+    stage: 'streaming', renderer: 'stereo', virtualLayout: null, hrtf: null, hrtfRevision: null,
+    binauralLatencyMs: null, binauralP95Ms: null, binauralMaxMs: null,
+    currentVideoMediaTime: 0, currentAudioMediaTime: 0, driftMs: 0, averageDb: -10,
+    driftP50Ms: 0, driftP95Ms: 0, driftMaxMs: 0, resyncCount: 0,
+    compressedBufferMs: 0, pcmBufferMs: 0, underrunCount: 0,
+    decodeMeanMs: 0, decodeP95Ms: 0, decodeMaxMs: 0, realtimeFactor: 1,
+    wasmMemoryBytes: 64 * 1024, peakWasmMemoryBytes: 128 * 1024,
+    mediaUrl: null, audioContextTime: null, audioPerformanceTime: null,
+    baseLatencyMs: null, outputLatencyMs: null, decodedAccessUnits: 1,
+    outputFrames: 1, outputSamples: 2, workletProcessGapMaxMs: 0,
+    workletProcessGapOver20MsCount: 0, workletPlayedQuantumCount: 0,
+    workletSilentQuantumCount: 0, workletLastReadType: null,
+  };
+  controller.setStatus({phase: 'active', reason: null, inbandJocConfirmed: true, profile: 'JOC', metrics});
+  controller.setManifest(true);
+  controller.setRequested(true);
+  document.panelBody.simulate('click', createActionTarget(document, 'open-diagnostics'));
+
+  assert.match(document.panelMarkup, /<span>WASM current<\/span><strong data-live="diag-memory">64 KiB<\/strong>/, 'the current row renders the current decoder snapshot');
+  assert.match(document.panelMarkup, /<span>WASM peak<\/span><strong data-live="diag-memory-peak">128 KiB<\/strong>/, 'the peak row renders the high-water mark');
+
+  document.panelBody.simulate('click', createActionTarget(document, 'open-raw'));
+  assert.match(document.panelMarkup, /&quot;wasmMemoryBytes&quot;: 65536/, 'raw diagnostics expose the current value in bytes');
+  assert.match(document.panelMarkup, /&quot;wasmMemoryPeakBytes&quot;: 131072/, 'raw diagnostics expose the peak value in bytes');
+});

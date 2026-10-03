@@ -13,6 +13,8 @@ test('refresh resets page generation while the existing audio pipeline accepts n
     const active = await runtime.active('after-refresh');
     assert.ok(active.metrics.decodedAccessUnits > 0);
     assert.ok(active.metrics.currentAudioMediaTime !== null);
+    assert.ok(active.metrics.wasmMemoryBytes > 0, 'the current WASM memory snapshot reaches the extension status');
+    assert.ok(active.metrics.peakWasmMemoryBytes >= active.metrics.wasmMemoryBytes, 'the WASM memory high-water mark is at least the current snapshot');
   } finally {
     runtime.close();
   }

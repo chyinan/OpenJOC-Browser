@@ -21,6 +21,29 @@ function run(): void {
   assert(!isMainBridgeMessage({source: 'openjoc-bilibili', type: 'manifest', pageOrigin: 'https://evil.example', pageUrl: 'https://evil.example/', mediaKey, candidates: [candidate]}), 'wrong main origin is rejected');
   assert(isRuntimeMessage({target: 'background', type: 'toggle'}), 'valid toggle is accepted');
   const sofaTransferId = '12345678-1234-4123-8123-123456789abc';
+  const playbackMetrics = {
+    stage: 'streaming', renderer: 'stereo', virtualLayout: null, hrtf: null, hrtfRevision: null,
+    binauralLatencyMs: null, binauralP95Ms: null, binauralMaxMs: null,
+    currentVideoMediaTime: 0, currentAudioMediaTime: 0, driftMs: null, averageDb: null,
+    driftP50Ms: null, driftP95Ms: null, driftMaxMs: null, resyncCount: 0,
+    compressedBufferMs: 0, pcmBufferMs: 0, underrunCount: 0,
+    decodeMeanMs: 0, decodeP95Ms: 0, decodeMaxMs: 0, realtimeFactor: null,
+    wasmMemoryBytes: 65_536, peakWasmMemoryBytes: 131_072,
+    mediaUrl: null, audioContextTime: null, audioPerformanceTime: null,
+    baseLatencyMs: null, outputLatencyMs: null, decodedAccessUnits: 1,
+    outputFrames: 1, outputSamples: 2, workletProcessGapMaxMs: 0,
+    workletProcessGapOver20MsCount: 0, workletPlayedQuantumCount: 0,
+    workletSilentQuantumCount: 0, workletLastReadType: null,
+  };
+  const offscreenStatus = {
+    target: 'background', type: 'offscreen-status', requestId: 'memory-check', tabId: 1,
+    mediaKey, generation: 1, phase: 'active', reason: null, inbandJocConfirmed: true,
+    profile: 'JOC', metrics: playbackMetrics,
+  };
+  assert(isRuntimeMessage(offscreenStatus), 'valid current and peak WASM memory metrics cross the runtime boundary');
+  assert(!isRuntimeMessage({...offscreenStatus, metrics: {...playbackMetrics, wasmMemoryBytes: undefined}}), 'a missing current WASM memory value is rejected');
+  assert(!isRuntimeMessage({...offscreenStatus, metrics: {...playbackMetrics, wasmMemoryBytes: -1}}), 'a negative current WASM memory value is rejected');
+  assert(!isRuntimeMessage({...offscreenStatus, metrics: {...playbackMetrics, wasmMemoryBytes: Number.POSITIVE_INFINITY}}), 'a non-finite current WASM memory value is rejected');
   assert(isRuntimeMessage({target: 'background', type: 'custom-sofa-import-start', transferId: sofaTransferId, byteLength: 4}), 'bounded custom SOFA import can begin');
   assert(!isRuntimeMessage({target: 'background', type: 'custom-sofa-import-start', transferId: sofaTransferId, byteLength: 0}), 'empty custom SOFA imports are rejected');
   assert(isRuntimeMessage({target: 'background', type: 'custom-sofa-import-chunk', transferId: sofaTransferId, index: 0, bytesBase64: 'AQIDBA=='}), 'base64 custom SOFA chunks cross the extension boundary');

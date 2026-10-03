@@ -53,6 +53,7 @@ export type PlaybackMetrics = Readonly<{
   readonly decodeP95Ms: number;
   readonly decodeMaxMs: number;
   readonly realtimeFactor: number | null;
+  readonly wasmMemoryBytes: number;
   readonly peakWasmMemoryBytes: number;
   readonly mediaUrl: string | null;
   readonly audioContextTime: number | null;
@@ -289,6 +290,7 @@ function isPlaybackMetrics(value: unknown): value is PlaybackMetrics {
     && isNonNegativeFinite(value.decodeP95Ms)
     && isNonNegativeFinite(value.decodeMaxMs)
     && isNullableFiniteNumber(value.realtimeFactor)
+    && isNonNegativeFinite(value.wasmMemoryBytes)
     && isNonNegativeFinite(value.peakWasmMemoryBytes)
     && isNullableString(value.mediaUrl)
     && isNullableFiniteNumber(value.audioContextTime)

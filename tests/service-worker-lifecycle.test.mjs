@@ -74,7 +74,7 @@ function hrtfSwitchMetrics(hrtf, hrtfRevision = null) {
     driftP50Ms: null, driftP95Ms: null, driftMaxMs: null, resyncCount: 0,
     compressedBufferMs: 0, pcmBufferMs: 0, underrunCount: 0,
     decodeMeanMs: 0, decodeP95Ms: 0, decodeMaxMs: 0, realtimeFactor: null,
-    peakWasmMemoryBytes: 0, mediaUrl: null, audioContextTime: null, audioPerformanceTime: null,
+    wasmMemoryBytes: 0, peakWasmMemoryBytes: 0, mediaUrl: null, audioContextTime: null, audioPerformanceTime: null,
     baseLatencyMs: null, outputLatencyMs: null, decodedAccessUnits: 0, outputFrames: 0,
     outputSamples: 0, workletProcessGapMaxMs: 0, workletProcessGapOver20MsCount: 0,
     workletPlayedQuantumCount: 0, workletSilentQuantumCount: 0, workletLastReadType: null,

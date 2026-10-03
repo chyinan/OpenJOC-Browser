@@ -21,7 +21,7 @@ The user-facing phases are `preparing`, `ready`, `active`, `paused`, `buffering`
 - **Average level** is post-gain PCM RMS expressed as dBFS with a finite silence floor. It is labeled dB, not LUFS.
 - **Buffer** reports queued PCM duration. **Underruns** count Worklet output quanta that lacked PCM.
 - **Decode p95** and **Realtime factor** describe measured WASM processing cost on the current machine; they vary by host.
-- **WASM memory** reports the current bounded memory snapshot exposed by the decoder.
+- **WASM memory current** is the latest reported byte length of the decoder's WebAssembly linear-memory buffer. **WASM peak** is the high-water mark observed for that decoder instance. Both values are refreshed with decoder-status snapshots, so they can lag activity between reports; they describe the decoder's linear memory, not the browser process's total memory use. WebAssembly linear memory grows but does not shrink, so the current and peak values can commonly be equal even though they have distinct meanings. The raw diagnostics JSON exposes them as `wasmMemoryBytes` and `wasmMemoryPeakBytes`.
 
 ## Privacy of diagnostics
 

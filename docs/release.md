@@ -6,7 +6,9 @@ The release offers one Chromium ZIP:
 
 `OpenJOC-Browser-vX.Y.Z-chromium-standard.zip`
 
-Edge and Chrome use the same Manifest V3 output. The ZIP expands to:
+Edge and Chrome use the same Manifest V3 output. The tree below is an overview of the package's main files, not an exhaustive inventory. The ZIP also includes every compiled JavaScript module emitted from `src/**/*.ts`, including shared dependency modules used by the service worker, offscreen document, player, and content scripts.
+
+The ZIP expands to:
 
 ```text
 OpenJOC-Browser-vX.Y.Z/
@@ -14,6 +16,10 @@ OpenJOC-Browser-vX.Y.Z/
   service-worker.js
   offscreen.html
   offscreen.js
+  decoder-worker.js
+  pcm-processor.js
+  player.html
+  player.js
   bilibili-content.bundle.js
   bilibili-main-bridge.js
   bilibili-audio-controls.js
@@ -22,12 +28,15 @@ OpenJOC-Browser-vX.Y.Z/
   icons/icon-48.png
   icons/icon-128.png
   wasm/openjoc_wasm.wasm
+  wasm/openjoc-build-info.json
   wasm/hrtf/manifest.json
   wasm/hrtf/sadie-ii-d1-ku100.ojhrtf
   wasm/hrtf/sadie-ii-d2-kemar.ojhrtf
   LICENSE
   THIRD_PARTY_NOTICES.txt
 ```
+
+`player.html` and `player.js` provide the local raw `.ec3` QA player. It is included in the ZIP for development/testing and is not part of the extension's normal playback path. The listed files are key entry points and assets; the accompanying compiled modules are required dependencies and are packaged alongside them at the extension root.
 
 The package always includes both D1 and D2, with their registry-pinned byte lengths and SHA-256 values. There is no separate Full package because both profiles are available offline in the Standard ZIP. The package script excludes source maps and hidden files, uses stable file ordering and fixed ZIP metadata, and writes a SHA-256 checksum next to the artifact. The first-release source-map policy is `EXCLUDE`.
 
