@@ -179,6 +179,7 @@ function sendStatus(
     decodeP95Ms: decoder?.decodeP95Ms ?? 0,
     decodeMaxMs: decoder?.decodeMaxMs ?? 0,
     realtimeFactor: decoder?.realtimeFactor ?? null,
+    wasmMemoryBytes: decoder?.wasmMemoryBytes ?? 0,
     peakWasmMemoryBytes: decoder?.wasmMemoryPeakBytes ?? 0,
     mediaUrl: session.request.candidate.baseUrl.length > 0 ? sanitizeMediaUrl(session.request.candidate.baseUrl) : null,
     audioContextTime: outputClock.contextTime,

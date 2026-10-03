@@ -133,7 +133,7 @@ export function createJocOverlayController(callbacks: JocOverlayCallbacks): JocO
     setLiveText('diag-underruns', metrics === null ? '—' : formatInteger(metrics.underrunCount));
     setLiveText('diag-decode-p95', metrics === null ? '—' : `${formatNumber(metrics.decodeP95Ms, 1)} ms`);
     setLiveText('diag-realtime', metrics?.realtimeFactor === null || metrics === null ? '—' : `${formatNumber(metrics.realtimeFactor, 2)}×`);
-    setLiveText('diag-memory', metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes));
+    setLiveText('diag-memory', metrics === null ? '—' : formatBytes(metrics.wasmMemoryBytes));
     setLiveText('diag-memory-peak', metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes));
     setLiveText('diag-binaural-latency', metrics?.binauralLatencyMs === null || metrics === null ? '—' : `${formatNumber(metrics.binauralLatencyMs, 2)} ms`);
     setLiveText('diag-binaural-p95', metrics?.binauralP95Ms === null || metrics === null ? '—' : `${formatNumber(metrics.binauralP95Ms, 2)} ms`);
@@ -509,7 +509,7 @@ function renderDiagnostics(state: OverlayState, status: OverlayStatus | null, ra
     ${renderDiagGroup('profile', [{label: t('diagProfile'), value: status?.profile ?? t('waitingForProfile'), liveKey: 'diag-profile'}, {label: t('diagStage'), value: status?.metrics.stage ?? '—', liveKey: 'diag-stage'}], t)}
     ${renderDiagGroup('audio', [{label: t('diagSampleRate'), value: `${OVERLAY_SAMPLE_RATE} Hz`, liveKey: null}, {label: t('diagOutputChannels'), value: '2', liveKey: null}, {label: t('diagRenderer'), value: rendererLabel(state.renderer, t), liveKey: null}], t)}
     ${renderDiagGroup('realtime', [{label: t('diagDrift'), value: metrics?.driftMs === null || metrics === null ? '—' : formatNumber(metrics.driftMs, 1) + ' ms', liveKey: 'diag-drift'}, {label: t('diagLoudness'), value: metrics?.averageDb === null || metrics === null ? '—' : formatNumber(metrics.averageDb, 1) + ' dB', liveKey: 'diag-loudness'}, {label: t('diagBuffer'), value: metrics === null ? '—' : formatDuration(metrics.pcmBufferMs), liveKey: 'diag-buffer'}, {label: t('diagUnderruns'), value: metrics === null ? '—' : formatInteger(metrics.underrunCount), liveKey: 'diag-underruns'}, {label: t('diagDecodeP95'), value: metrics === null ? '—' : formatNumber(metrics.decodeP95Ms, 1) + ' ms', liveKey: 'diag-decode-p95'}, {label: t('diagRealtimeFactor'), value: metrics?.realtimeFactor === null || metrics === null ? '—' : formatNumber(metrics.realtimeFactor, 2) + '×', liveKey: 'diag-realtime'}], t)}
-    ${renderDiagGroup('memory', [{label: t('diagWasmCurrent'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory'}, {label: t('diagWasmPeak'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory-peak'}], t)}
+    ${renderDiagGroup('memory', [{label: t('diagWasmCurrent'), value: metrics === null ? '—' : formatBytes(metrics.wasmMemoryBytes), liveKey: 'diag-memory'}, {label: t('diagWasmPeak'), value: metrics === null ? '—' : formatBytes(metrics.peakWasmMemoryBytes), liveKey: 'diag-memory-peak'}], t)}
     <div class="diagnostics-actions">${raw}<button class="secondary-trigger" type="button" data-action="close-diagnostics" aria-expanded="true"><span>${escapeHtml(t('collapseDiagnostics'))}</span><span class="trigger-chevron up">›</span></button><span class="copy-status" data-copy-status aria-live="polite"></span></div>`;
 }
 
@@ -654,7 +654,8 @@ function diagnosticsJson(state: OverlayState, status: OverlayStatus | null): str
     hrtf: metrics?.hrtf ?? (isBinaural ? 'Built-in SADIE II D1' : null),
     binauralLatencyMs: metrics?.binauralLatencyMs ?? null,
     binauralP95Ms: metrics?.binauralP95Ms ?? null,
-    wasmMemoryBytes: metrics?.peakWasmMemoryBytes ?? null,
+    wasmMemoryBytes: metrics?.wasmMemoryBytes ?? null,
+    wasmMemoryPeakBytes: metrics?.peakWasmMemoryBytes ?? null,
     reason: status?.reason ?? null,
   }, null, 2);
 }
