@@ -10,6 +10,9 @@ OpenJOC-Browser brings OpenJOC E-AC-3 JOC decoding to Chromium-based web playbac
 
 The first public release targets Microsoft Edge and Google Chrome. The primary site integration is standard Bilibili VOD when the current account/session exposes an E-AC-3 JOC representation. A local extension player is also available for project-owned `.ec3` fixtures and development testing.
 
+> [!IMPORTANT]
+> **OpenJOC-Browser does not provide, crack, or bypass Bilibili Premium or Dolby Atmos access.** The current account/session must already be entitled to the audio representation, and the video itself must provide an E-AC-3 JOC track. When those conditions are met, the extension can discover and play the JOC representation without requiring the Dolby Atmos option to be enabled manually in Bilibili's player. It cannot turn an ordinary stereo source into Dolby Atmos.
+
 ## Current capabilities
 
 - OpenJOC WASM decoding of E-AC-3 JOC.
@@ -139,6 +142,9 @@ OpenJOC-Browser source is available under the [Apache License 2.0](LICENSE). Ope
 OpenJOC-Browser 通过 WebAssembly 和 Web Audio，将 OpenJOC 的 E-AC-3 JOC 解码能力带到基于 Chromium 的网页播放中。
 
 首个公开版本面向 Microsoft Edge 和 Google Chrome。主要的站点集成是标准 Bilibili 视频点播：当当前账号或会话提供 E-AC-3 JOC 表示时，扩展会尝试使用该表示。本地扩展播放器也可用于项目自有的 `.ec3` 固定测试文件和开发测试。
+
+> [!IMPORTANT]
+> **OpenJOC-Browser 不提供、破解或绕过哔哩哔哩大会员及杜比全景声音质权限。** 当前账号或会话必须已经具备相应音质权限，并且视频本身必须提供 E-AC-3 JOC 音轨。满足这些条件时，即使没有在 Bilibili 原播放器中手动开启“杜比全景声”，扩展也可以自动发现并播放该 JOC 音轨；普通立体声音源不会因启用扩展而变成杜比全景声。
 
 ## 当前能力
 
