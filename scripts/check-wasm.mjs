@@ -10,6 +10,7 @@ const openjocRoot = await resolveOpenjocRoot();
 const cargo = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 const result = spawnSync(cargo, [
   'check',
+  '--locked',
   '--manifest-path', join(openjocRoot, 'Cargo.toml'),
   '-p', 'openjoc-wasm',
   '--no-default-features',

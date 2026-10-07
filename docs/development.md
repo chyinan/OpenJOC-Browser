@@ -4,12 +4,12 @@
 
 - Node.js `24.15.0`, recorded in `.nvmrc` and constrained by `package.json` engines.
 - npm with the committed `package-lock.json`; use `npm ci`.
-- Rust `1.85` or newer with the `wasm32-unknown-unknown` target.
+- Rust `1.89` or newer with the `wasm32-unknown-unknown` target.
 - Git, to record the OpenJOC revision used by the build.
 
 For coordinated local development, the build prefers a neighboring `OpenJOC` checkout; `OPENJOC_ROOT` can explicitly select any local source tree with `Cargo.toml`. The generated `extension/wasm/openjoc-build-info.json` records the source commit and whether the Git tree is dirty. This lets the Browser use the active OpenJOC source rather than rejecting it for not matching an older pin.
 
-When no neighboring or explicitly selected checkout exists, the resolver checks out the configured public source ref (default `master`). The current public `master` includes the external-HRTF asset ABI and `external-builtin-hrtf-assets` feature required by this build. Set `OPENJOC_SOURCE_PIN` to a full 40-hex commit SHA to make a build reproducible or select a specific historical revision; path-like or abbreviated pins are rejected. Pinned archives are used only when Git transport is unavailable and a valid pin was supplied. Use `OPENJOC_ROOT` to build from a local source checkout. Release artifacts record the resolved commit and dirty state. A selected revision must still provide the external-HRTF ABI and feature or the build fails its compatibility check.
+When no neighboring or explicitly selected checkout exists, the resolver uses the released OpenJOC v0.19.0 commit recorded in `scripts/openjoc-source.json`. CI and release packaging load that same manifest, rather than mutable repository variables. Set `OPENJOC_SOURCE_PIN` to a full 40-hex commit SHA to select another exact revision; path-like or abbreviated pins are rejected. An explicit pin bypasses the neighboring checkout and validates `OPENJOC_ROOT` if supplied. Set `OPENJOC_SOURCE_REF` explicitly to test a development branch or tag without a pin. Pinned archives are used only when Git transport is unavailable. Release artifacts record the resolved commit and dirty state. A selected revision must still provide the external-HRTF ABI and feature or the build fails its compatibility check.
 
 ## Install and gates
 
@@ -64,3 +64,5 @@ Chrome uses `scripts/launch-chrome.ps1` with a different port. The CDP fixture s
 ## Source maps and generated output
 
 Source maps are excluded from the first release. The source repository is public and the package is intended to be a loadable runtime artifact; shipping unneeded maps would increase the package without adding a supported debugging surface. Generated JavaScript, WASM, test output, QA profiles, parity output, caches, and release archives are ignored and must be recreated by the documented commands.
+
+The `npm run check:parity` aggregate checks native/WASM and raw/CMAF output in stereo and binaural modes with both calibrated and unity dialnorm. CI and release packaging run this matrix; the binaural cases exercise the default direct-FIR backend. Both Browser parity gates require byte-identical PCM; the separate core frozen-baseline gate compares same-platform output against the pre-optimization oracle.

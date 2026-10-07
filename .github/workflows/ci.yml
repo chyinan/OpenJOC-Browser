@@ -17,8 +17,6 @@ concurrency:
 jobs:
   verify:
     runs-on: windows-latest
-    env:
-      OPENJOC_SOURCE_PIN: ${{ vars.OPENJOC_SOURCE_PIN || 'a7c82ef01ab507977134f96b7a7b627118d342cc' }}
     steps:
       - name: Check out Browser source
         uses: actions/checkout@v7
@@ -28,6 +26,13 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+
+      - name: Select the reviewed OpenJOC release
+        shell: pwsh
+        run: |
+          $source = Get-Content scripts/openjoc-source.json | ConvertFrom-Json
+          "OPENJOC_SOURCE_PIN=$($source.commit)" >> $env:GITHUB_ENV
+          "OPENJOC_SOURCE_REF=v$($source.version)" >> $env:GITHUB_ENV
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -74,11 +79,8 @@ jobs:
       - name: Run lifecycle integration tests
         run: npm run test:lifecycle
 
-      - name: Run native/WASM parity
-        run: npm run parity
-
-      - name: Run raw/CMAF parity
-        run: npm run cmaf-parity
+      - name: Run stereo and binaural parity with both dialnorm modes
+        run: npm run check:parity
 
       - name: Package release artifact
         run: npm run package:release -- --version ${{ steps.package-version.outputs.version }}
