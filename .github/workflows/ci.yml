@@ -87,3 +87,13 @@ jobs:
 
       - name: Validate release artifact
         run: npm run validate:release -- --version ${{ steps.package-version.outputs.version }}
+
+      - name: Upload validated release candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: OpenJOC-Browser-v${{ steps.package-version.outputs.version }}-chromium-standard
+          path: |
+            release/OpenJOC-Browser-v${{ steps.package-version.outputs.version }}-chromium-standard.zip
+            release/OpenJOC-Browser-v${{ steps.package-version.outputs.version }}-chromium-standard.zip.sha256
+          if-no-files-found: error
+          retention-days: 7

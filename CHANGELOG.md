@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-07
+
 ### Changed
 
 - Build the Browser decoder against released OpenJOC v0.19.0 (`291900ce33ea349c4b855655cdb282819e94eabc`), including the QMF and binaural FIR performance improvements in the actual WASM playback path.
@@ -9,6 +11,10 @@
 - Raise the documented Rust minimum to 1.89, matching the core.
 
 The performance changes preserve PCM for the same platform and configuration. The core update also includes intentional decoder correctness fixes, so this is not a claim that every input matches older Browser releases bit-for-bit.
+
+### Fixed
+
+- Report current WASM memory separately from peak usage in the diagnostics panel and copied diagnostics.
 
 ## [0.1.8] - 2026-09-28
 
