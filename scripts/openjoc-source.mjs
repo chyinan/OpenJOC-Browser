@@ -8,8 +8,12 @@ import {fileURLToPath} from 'node:url';
 const browserRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const OPENJOC_REPOSITORY = 'https://github.com/chyinan/OpenJOC.git';
-export const OPENJOC_SOURCE_REF = process.env.OPENJOC_SOURCE_REF?.trim() || 'master';
-export const OPENJOC_SOURCE_PIN = normalizeOpenjocSourcePin(process.env.OPENJOC_SOURCE_PIN);
+export const OPENJOC_RELEASE = Object.freeze(JSON.parse(readFileSync(new URL('./openjoc-source.json', import.meta.url), 'utf8')));
+const explicitPin = normalizeOpenjocSourcePin(process.env.OPENJOC_SOURCE_PIN);
+const explicitRef = process.env.OPENJOC_SOURCE_REF?.trim();
+export const OPENJOC_SOURCE_REF = explicitRef || `v${OPENJOC_RELEASE.version}`;
+export const OPENJOC_SOURCE_PIN = explicitPin
+  ?? (explicitRef ? null : normalizeOpenjocSourcePin(OPENJOC_RELEASE.commit));
 export const OPENJOC_ARCHIVE_URL = OPENJOC_SOURCE_PIN === null
   ? null
   : `https://codeload.github.com/chyinan/OpenJOC/tar.gz/${OPENJOC_SOURCE_PIN}`;
@@ -45,11 +49,12 @@ export async function resolveOpenjocRoot() {
   if (configuredRoot !== undefined && configuredRoot.length > 0) {
     const root = resolve(configuredRoot);
     if (!existsSync(join(root, 'Cargo.toml'))) throw new Error(`OpenJOC local source is missing Cargo.toml: ${root}`);
+    if (explicitPin !== null) assertPinnedCheckout(root);
     return root;
   }
 
   const siblingRoot = resolve(browserRoot, '..', 'OpenJOC');
-  if (existsSync(join(siblingRoot, 'Cargo.toml')) && existsSync(join(siblingRoot, '.git'))) {
+  if (explicitPin === null && !explicitRef && existsSync(join(siblingRoot, 'Cargo.toml')) && existsSync(join(siblingRoot, '.git'))) {
     return siblingRoot;
   }
   const root = await ensureCachedOpenjoc();

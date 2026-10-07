@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Build the Browser decoder against released OpenJOC v0.19.0 (`291900ce33ea349c4b855655cdb282819e94eabc`), including the QMF and binaural FIR performance improvements in the actual WASM playback path.
+- Share one reviewed core source manifest across CI, release packaging, and standalone builds; explicit source pins cannot silently use an unrelated neighboring checkout.
+- Raise the documented Rust minimum to 1.89, matching the core.
+
+The performance changes preserve PCM for the same platform and configuration. The core update also includes intentional decoder correctness fixes, so this is not a claim that every input matches older Browser releases bit-for-bit.
+
 ## [0.1.8] - 2026-09-28
 
 ### Changed

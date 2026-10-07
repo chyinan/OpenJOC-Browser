@@ -44,7 +44,7 @@ The build copies both HRTF assets from the selected OpenJOC source checkout and 
 
 ## Release workflow
 
-`.github/workflows/release.yml` runs only for a `v*.*.*` tag. It checks that the tag version equals `package.json` and `extension/manifest.json`, installs dependencies with `npm ci`, resolves OpenJOC, runs checks/tests, builds the Standard package with both HRTFs, validates the asset manifest and ZIP checksum, and creates a draft GitHub Release with the ZIP and checksum attached. For a reproducible release, set `OPENJOC_SOURCE_PIN` to the exact 40-hex compatible OpenJOC commit; unsafe path-like values are rejected. Otherwise standalone builds resolve the configured ref (default `master`) and record its actual commit.
+`.github/workflows/release.yml` runs only for a `v*.*.*` tag. It checks that the tag version equals `package.json` and `extension/manifest.json`, installs dependencies with `npm ci`, resolves OpenJOC, runs checks/tests, builds the Standard package with both HRTFs, validates the asset manifest and ZIP checksum, and creates a draft GitHub Release with the ZIP and checksum attached. CI and release builds load the exact compatible OpenJOC version and 40-hex commit from `scripts/openjoc-source.json`; update that reviewed manifest together when adopting a new core release. Repository variables cannot override the release pin. Standalone builds use the same pin unless explicitly given a development source override, and all builds record the actual source commit.
 
 The workflow has `contents: write` only because creating a GitHub Release requires it. It does not publish to Chrome Web Store or Microsoft Edge Add-ons. A tag is not created by the repository scripts.
 

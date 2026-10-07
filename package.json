@@ -15,6 +15,7 @@
     "check:release-policy": "node scripts/check-release-policy.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:license": "node scripts/check-license.mjs",
+    "check:parity": "node scripts/check-parity.mjs",
     "parity": "node scripts/wasm-parity.mjs",
     "benchmark:hrtf": "node --expose-gc scripts/hrtf-benchmark.mjs",
     "cmaf-parity": "node scripts/cmaf-parity.mjs",
