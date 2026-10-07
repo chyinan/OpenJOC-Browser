@@ -54,13 +54,15 @@ The workflow has `contents: write` only because creating a GitHub Release requir
 npm ci
 npm run check:version
 npm run check:release-policy
+npm run check:secrets
+npm run check:license
 npm run check:wasm
 npm run check
 npm test
-npm run test:lifecycle
 npm run build
-npm run parity
-npm run cmaf-parity
+npm run test:bundle
+npm run test:lifecycle
+npm run check:parity
 npm run package:release
 npm run validate:release
 ```
