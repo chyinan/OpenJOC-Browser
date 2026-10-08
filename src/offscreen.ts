@@ -751,12 +751,12 @@ function handleClock(message: Extract<RuntimeMessage, {target: 'offscreen'; type
     return;
   }
   if (shouldResyncForAudioLead(latestWorkletStats.currentAudioMediaSamples, message.mediaTimeSamples)) {
-    enqueueStartSession({...session.request, videoTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
+    enqueueStartSession({...session.request, gainDb: session.gainDb, videoTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
     return;
   }
   const elapsedSinceVideoClockMs = Math.max(0, performance.now() - lastVideoClockAtMs);
   if (shouldResyncForVideoLag({audioMediaSamples: latestWorkletStats.currentAudioMediaSamples, videoMediaSamples: message.mediaTimeSamples, elapsedSinceVideoClockMs, staleAfterMs: VIDEO_CLOCK_STALE_AFTER_MS})) {
-    enqueueStartSession({...session.request, videoTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
+    enqueueStartSession({...session.request, gainDb: session.gainDb, videoTimeSamples: message.mediaTimeSamples, paused: message.paused, buffering: message.buffering});
     return;
   }
   latestVideoMediaSamples = message.mediaTimeSamples;
