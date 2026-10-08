@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {createPlaybackRuntime, createSourceRuntime} from './helpers/extension-runtime.mjs';
+import {createPlaybackRuntime, createSourceRuntime, waitFor} from './helpers/extension-runtime.mjs';
 
 test('gain policy defaults to zero and constrains saved or typed values to half-dB steps', async () => {
   const gain = await createSourceRuntime().load('output-gain.js');
@@ -122,3 +122,49 @@ test('explicit reset saves zero even when the gain control still shows its initi
   panel.events.get('click')({target: action});
   assert.deepEqual(saved, [0], 'reset must notify persistence even before a delayed saved setting is restored');
 });
+
+for (const recovery of ['audio lead', 'video lag']) {
+  for (const state of ['latest gain', 'muted player', 'pending gain']) {
+    test(`${recovery} recovery preserves ${state} and player volume`, async () => {
+      const playback = await createPlaybackRuntime({segments: 20});
+      const requestId = `${recovery}-${state}`;
+      const gainControl = {target: 'offscreen', type: 'output-gain', requestId, tabId: 1, generation: 1};
+      const playerControl = {target: 'offscreen', type: 'player-volume', requestId, tabId: 1, generation: 1, volume: 0.25, muted: state === 'muted player', activate: false};
+      try {
+        playback.start(1, requestId);
+        await playback.active(requestId);
+        playback.dispatch({...gainControl, gainDb: 6});
+        playback.dispatch({...gainControl, gainDb: -20});
+        playback.dispatch(playerControl);
+        assert.equal(playback.outputGain, playerControl.muted ? 0 : 0.025);
+
+        const previousStats = playback.workletStats.at(-1);
+        assert.ok(previousStats !== undefined);
+        playback.emitWorkletStats({...previousStats, currentAudioMediaSamples: recovery === 'audio lead' ? 120_000 : 0});
+        if (recovery === 'video lag') playback.elapseIdle(24_000);
+        const preparingCount = () => playback.messages.filter(message => message.requestId === requestId && message.phase === 'preparing').length;
+        const before = preparingCount();
+        playback.dispatch({target: 'offscreen', type: 'clock', tabId: 1, generation: 1, mediaTimeSamples: recovery === 'audio lead' ? 0 : 24 * 48_000, paused: true, buffering: false, playbackRate: 1, expectedDisplayTimeMs: null});
+        // The restart is serialized: a newer control must update its pending gain.
+        if (state === 'pending gain') playback.dispatch({...gainControl, gainDb: 6});
+        await waitFor(() => preparingCount() > before, `${recovery} restart`);
+        const expectedGain = state === 'pending gain' ? 6 : -20;
+        const expectedAmplitude = 0.25 * 10 ** (expectedGain / 20);
+        assert.equal(playback.outputGain, playerControl.muted ? 0 : expectedAmplitude);
+
+        // Unmuting exposes the retained gain, rather than hiding a reset at zero output.
+        playback.dispatch({...playerControl, muted: false});
+        assert.equal(playback.outputGain, expectedAmplitude);
+        playback.dispatch({...gainControl, generation: 0, gainDb: 20});
+        playback.dispatch({...gainControl, requestId: 'stale', gainDb: 20});
+        assert.equal(playback.outputGain, expectedAmplitude);
+
+        // A subsequent in-place restart must retain the recovered live value too.
+        const beforeDialnorm = preparingCount();
+        playback.dispatch({target: 'offscreen', type: 'dialnorm', tabId: 1, generation: 1, mode: 'calibrated'});
+        await waitFor(() => preparingCount() > beforeDialnorm, 'dialnorm restart after resync');
+        assert.equal(playback.outputGain, expectedAmplitude);
+      } finally {playback.close();}
+    });
+  }
+}
