@@ -250,6 +250,7 @@ export async function createPlaybackRuntime(options = {}) {
 
   return {
     messages, pcmMessages, workletStats, dispatch,
+    emitWorkerMessage(message) {workers.at(-1)?.onmessage?.({data: message});},
     emitWorkletStats(stats) {newProcessorPort?.dispatch(stats);},
     get renderedQuantumCount() {return renderedQuantumCount;},
     get outputGain() {return nodes.at(-1)?.parameters.get('outputGain')?.value;},

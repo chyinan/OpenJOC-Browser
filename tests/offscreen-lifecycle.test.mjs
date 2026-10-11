@@ -4,6 +4,32 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {createPlaybackRuntime, waitFor} from './helpers/extension-runtime.mjs';
 
+for (const phase of ['paused', 'buffering']) {
+  test(`decode completion preserves ${phase} status until the video resumes`, async () => {
+    const runtime = await createPlaybackRuntime();
+    try {
+      runtime.start(1, `completion-${phase}`);
+      await runtime.active(`completion-${phase}`);
+      const clock = {target: 'offscreen', type: 'clock', tabId: 1, generation: 1, mediaTimeSamples: 0, paused: phase === 'paused', buffering: phase === 'buffering', playbackRate: 1, expectedDisplayTimeMs: null};
+      runtime.dispatch(clock);
+      assert.equal(runtime.messages.at(-1).phase, phase);
+      for (let index = 0; index < 3; index += 1) {
+        const previousCount = runtime.messages.length;
+        runtime.emitWorkerMessage({type: 'decode-complete', generation: runtime.workletStats.at(-1).generation});
+        assert.equal(runtime.messages.length, previousCount + 1, 'completion is reported for the current decoder');
+        assert.equal(runtime.messages.at(-1).phase, phase, 'completion must not briefly announce active playback');
+        runtime.dispatch(clock);
+      }
+      runtime.dispatch({...clock, paused: false, buffering: false});
+      assert.equal(runtime.messages.at(-1).phase, 'active', 'the video resume restores active playback');
+      runtime.emitWorkerMessage({type: 'decode-complete', generation: runtime.workletStats.at(-1).generation});
+      assert.equal(runtime.messages.at(-1).phase, 'active');
+    } finally {
+      runtime.close();
+    }
+  });
+}
+
 test('refresh resets page generation while the existing audio pipeline accepts new PCM', async () => {
   const runtime = await createPlaybackRuntime();
   try {

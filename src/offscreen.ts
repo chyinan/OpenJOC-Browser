@@ -396,7 +396,8 @@ function handleWorkerMessage(message: WorkerMessage): void {
     return;
   }
   if (message.type === 'decode-complete') {
-    sendStatus(session.isNativeMuted ? 'active' : session.phase, null, session);
+    // Finishing a decode window does not resume a paused or buffering video.
+    sendStatus(session.phase, null, session);
     return;
   }
   void failSession(message.message);
