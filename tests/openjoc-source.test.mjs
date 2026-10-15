@@ -48,12 +48,12 @@ function withSourceWorkspace(run) {
 }
 
 test('standalone defaults and both workflows share the reviewed release manifest', () => {
-  assert.equal(OPENJOC_RELEASE.version, '0.19.0');
-  assert.equal(OPENJOC_RELEASE.commit, '291900ce33ea349c4b855655cdb282819e94eabc');
+  assert.equal(OPENJOC_RELEASE.version, '0.20.0');
+  assert.equal(OPENJOC_RELEASE.commit, 'd6a247641a5b56dae219afcca7bca491a70f9548');
   withSourceWorkspace(({invoke}) => {
     const result = invoke({}, false);
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout), {pin: OPENJOC_RELEASE.commit, ref: 'v0.19.0'});
+    assert.deepEqual(JSON.parse(result.stdout), {pin: OPENJOC_RELEASE.commit, ref: 'v0.20.0'});
     const development = invoke({OPENJOC_SOURCE_REF: 'master'}, false);
     assert.deepEqual(JSON.parse(development.stdout), {pin: null, ref: 'master'});
   });

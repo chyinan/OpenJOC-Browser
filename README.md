@@ -101,7 +101,7 @@ Media requests go to Bilibili endpoints needed for the selected session. Signed 
 
 ## Build from source
 
-Prerequisites are Git, Node.js 24.15.0, npm, Rust 1.89 or newer, and the `wasm32-unknown-unknown` Rust target. The build prefers `OPENJOC_ROOT` or a neighboring OpenJOC checkout without forcing an older revision; a standalone build uses the OpenJOC v0.19.0 commit in `scripts/openjoc-source.json` and records its exact commit in `openjoc-build-info.json`. Set `OPENJOC_SOURCE_PIN` to a full 40-hex commit SHA to select another exact commit, or explicitly set `OPENJOC_SOURCE_REF` for a development ref. An explicit pin bypasses a neighboring checkout and is checked against `OPENJOC_ROOT` when both are supplied.
+Prerequisites are Git, Node.js 24.15.0, npm, Rust 1.89 or newer, and the `wasm32-unknown-unknown` Rust target. The build prefers `OPENJOC_ROOT` or a neighboring OpenJOC checkout without forcing an older revision; a standalone build uses the OpenJOC v0.20.0 commit in `scripts/openjoc-source.json` and records its exact commit in `openjoc-build-info.json`. Set `OPENJOC_SOURCE_PIN` to a full 40-hex commit SHA to select another exact commit, or explicitly set `OPENJOC_SOURCE_REF` for a development ref. An explicit pin bypasses a neighboring checkout and is checked against `OPENJOC_ROOT` when both are supplied.
 
 ```powershell
 npm ci
@@ -236,7 +236,7 @@ Safari、Firefox、DRM/加密表示、其他 Bilibili 播放器类型、非 1.0 
 
 ## 从源代码构建
 
-前置条件：Git、Node.js 24.15.0、npm、Rust 1.89 或更高版本，以及 `wasm32-unknown-unknown` Rust 目标。构建优先使用 `OPENJOC_ROOT` 或相邻的 OpenJOC 检出，不会强制绑定较旧版本；独立构建默认采用 `scripts/openjoc-source.json` 中的 OpenJOC v0.19.0 精确提交，并在 `openjoc-build-info.json` 中记录精确提交。可用完整的 40 位十六进制 `OPENJOC_SOURCE_PIN` 选择其他精确提交，或显式设置 `OPENJOC_SOURCE_REF` 测试开发分支。显式 pin 不会被相邻检出覆盖；同时设置 `OPENJOC_ROOT` 时会校验其提交。
+前置条件：Git、Node.js 24.15.0、npm、Rust 1.89 或更高版本，以及 `wasm32-unknown-unknown` Rust 目标。构建优先使用 `OPENJOC_ROOT` 或相邻的 OpenJOC 检出，不会强制绑定较旧版本；独立构建默认采用 `scripts/openjoc-source.json` 中的 OpenJOC v0.20.0 精确提交，并在 `openjoc-build-info.json` 中记录精确提交。可用完整的 40 位十六进制 `OPENJOC_SOURCE_PIN` 选择其他精确提交，或显式设置 `OPENJOC_SOURCE_REF` 测试开发分支。显式 pin 不会被相邻检出覆盖；同时设置 `OPENJOC_ROOT` 时会校验其提交。
 
 ```powershell
 npm ci

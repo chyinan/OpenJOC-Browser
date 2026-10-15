@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
+### Changed
+
+- Build the Browser decoder against released OpenJOC v0.20.0 (`d6a247641a5b56dae219afcca7bca491a70f9548`).
+- Include the core's decoder continuity, grouped-frame dialnorm, and custom SOFA interpolation correctness fixes in the WASM playback path.
+
+### Scope
+
+- OpenJOC v0.20.0's new AVX direct-FIR path and AArch64 adjacent-output unroll apply to native builds. The Browser's `wasm32-unknown-unknown` build retains the scalar fallback for that code; this update does not add browser GPU acceleration or claim a new WASM SIMD speedup.
+- Correctness fixes can change previously incorrect output. The strict parity gates remain in place; this release does not claim identical PCM to v0.1.9 for every input.
+
 ## [0.1.9] - 2026-10-07
 
 ### Changed
